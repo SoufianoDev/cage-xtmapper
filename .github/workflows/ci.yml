@@ -68,7 +68,12 @@ jobs:
 
       - name: Check Go formatting, runtime and installation
         run: |
-          test -z "$(gofmt -l cmd internal tools tests)"
+          format_files="$(gofmt -l cmd internal tools tests)"
+          if [[ -n "$format_files" ]]; then
+            printf 'Go files need formatting:\\n%s\\n' "$format_files"
+            gofmt -d cmd internal tools tests
+            exit 1
+          fi
           export CC=clang PKG_CONFIG_PATH="$PWD/build/native/pkgconfig"
           go vet ./...
           go test -race -count=1 ./...
