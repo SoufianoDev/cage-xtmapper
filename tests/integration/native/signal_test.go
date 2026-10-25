@@ -249,3 +249,32 @@ func TestPrintOutputInfoHeadless(t *testing.T) {
 		t.Fatalf("output info missing on stderr: %q", errb.String())
 	}
 }
+
+
+// TestInternalHelpFlushesStdout checks that C stdio output survives Go's
+// os.Exit path when native help is redirected through a pipe.
+func TestInternalHelpFlushesStdout(t *testing.T) {
+	cmd := exec.Command(binPath, "--internal-cage", "-h")
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	err := cmd.Run()
+	exit, ok := err.(*exec.ExitError)
+	if !ok || exit.ExitCode() != 1 {
+		t.Fatalf("expected native help exit status 1, got %v (stderr %q)", err, errb.String())
+	}
+	if !bytes.Contains(out.Bytes(), []byte("Usage: cage-xtmapper")) {
+		t.Fatalf("native C stdout was not fully flushed: %q (stderr %q)", out.String(), errb.String())
+	}
+}
+
+// TestInternalClientArguments preserves empty and trailing arguments across
+// the Go-to-C argv bridge and posix_spawnp boundary.
+func TestInternalClientArguments(t *testing.T) {
+	cmd := exec.Command(binPath, "--internal-cage", "--", "sh", "-c",
+		`test "$#" -eq 2 && test -z "$1" && test "$2" = sentinel`, "_", "", "sentinel")
+	cmd.Env = headlessEnv(t)
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("native client argument vector changed: %v", err)
+	}
+}
