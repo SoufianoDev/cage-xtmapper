@@ -221,6 +221,7 @@ func supervise(ctx context.Context, cfg Config, t transport) (result int) {
 			return 1
 		}
 		code := comp.code
+		markShutdownCause(parentCtx, code)
 		cancel()
 		<-remote.dead
 		return code
@@ -232,6 +233,7 @@ func supervise(ctx context.Context, cfg Config, t transport) (result int) {
 			return 1
 		}
 		code := remote.code
+		markShutdownCause(parentCtx, code)
 		cancel()
 		<-comp.dead
 		return code
