@@ -251,3 +251,23 @@ func TestVerifyFresh(t *testing.T) {
 		t.Fatalf("expected schema error, got %v", err)
 	}
 }
+
+
+func TestNativeSourceDigestRejectsEscapingSymlink(t *testing.T) {
+	repo := t.TempDir()
+	tree := filepath.Join(repo, "native-src/cage")
+	if err := os.MkdirAll(tree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(repo, "native-src/outside.c")
+	if err := os.WriteFile(outside, []byte("external input"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../outside.c", filepath.Join(tree, "external.c")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NativeSourceDigest(repo, "native-src/cage"); err == nil ||
+		!strings.Contains(err.Error(), "escapes inventoried tree") {
+		t.Fatalf("expected escaping source symlink to be rejected, got %v", err)
+	}
+}
