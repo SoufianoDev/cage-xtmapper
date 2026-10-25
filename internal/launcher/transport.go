@@ -36,10 +36,6 @@ const (
 func waydroidTransport(cfg *Config) transport {
 	sudo := cfg.Tools.Sudo
 	waydroid := cfg.Tools.Waydroid
-	run := func(args []string) *exec.Cmd {
-		argv := append([]string{sudo, waydroid}, args...)
-		return exec.Command(argv[0], argv[1:]...)
-	}
 	runNonInteractive := func(args []string) *exec.Cmd {
 		argv := append([]string{sudo, "-n", waydroid}, args...)
 		return exec.Command(argv[0], argv[1:]...)
@@ -58,13 +54,22 @@ func waydroidTransport(cfg *Config) transport {
 			return nil
 		},
 		startContainer: func(ctx context.Context) error {
-			cmd := run([]string{"container", "start"})
-			runContainer := runInheritForeground
-			if !terminalForeground() {
-				// A background process must not let sudo read its controlling terminal.
-				cmd, runContainer = runNonInteractive([]string{"container", "start"}), runInherit
+			if terminalForeground() {
+				// Authenticate while this process still owns the foreground terminal
+				// group. The actual container start then runs under sudo -n in a
+				// dedicated process group so cancellation also reaches its children.
+				auth := exec.Command(sudo, "-v")
+				code, err := runInheritForeground(ctx, auth, containerStartTimeout)
+				if err != nil {
+					return fmt.Errorf("could not authenticate sudo for Waydroid container start: %w", err)
+				}
+				if code != 0 {
+					return errChildExit("could not authenticate sudo for Waydroid container start", code)
+				}
 			}
-			code, err := runContainer(ctx, cmd, containerStartTimeout)
+
+			cmd := runNonInteractive([]string{"container", "start"})
+			code, err := runInherit(ctx, cmd, containerStartTimeout)
 			if err != nil {
 				return fmt.Errorf("could not start the Waydroid container: %w", err)
 			}
