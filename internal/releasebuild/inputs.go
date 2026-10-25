@@ -49,7 +49,11 @@ func collectInventory(repo string, roots []string) ([]string, error) {
 			if err != nil {
 				return "", fmt.Errorf("cannot resolve source symlink %s: %w", relative, err)
 			}
-			scopeAbs, err := filepath.Abs(scopeRoot)
+			scopeResolved, err := filepath.EvalSymlinks(scopeRoot)
+			if err != nil {
+				return "", fmt.Errorf("cannot resolve source tree %s: %w", relative, err)
+			}
+			scopeAbs, err := filepath.Abs(scopeResolved)
 			if err != nil {
 				return "", err
 			}
