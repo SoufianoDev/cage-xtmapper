@@ -49,6 +49,9 @@ func (m *manager) report(output io.Writer) error {
 	for _, path := range m.removed {
 		fmt.Fprintln(output, "Removed:", path)
 	}
+	for _, path := range m.migrated {
+		fmt.Fprintln(output, "Migrated legacy launcher to backup:", path)
+	}
 	active := "none"
 	if m.state != nil {
 		if m.state.Release != nil {

@@ -64,6 +64,7 @@ type manager struct {
 	state                   *state
 	tx                      *transaction
 	removed                 []string
+	migrated                []string
 }
 
 func newManager(prefix string) (*manager, error) {

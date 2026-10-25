@@ -157,14 +157,75 @@ func (m *manager) recoverBootstrap() error {
 	return m.publishBootstrap()
 }
 
+func knownLegacyShell(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	content := string(data)
+	shebang := strings.HasPrefix(content, "#!/usr/bin/env bash") || strings.HasPrefix(content, "#!/bin/bash")
+	return shebang && strings.Contains(content, "cage_xtmapper") &&
+		strings.Contains(content, "RemoteServiceShell") && strings.Contains(content, "BOOT_WAIT_SECONDS")
+}
+
 func (m *manager) legacyConflicts() error {
 	for _, name := range []string{"cage_xtmapper", "cage_xtmapper.sh"} {
 		path := filepath.Join(m.bin, name)
-		if exists(path) {
-			return fmt.Errorf("legacy conflict: %s has no reliable ownership record; inspect/move it explicitly before installation", path)
+		if !exists(path) {
+			continue
 		}
+		if name == "cage_xtmapper.sh" && knownLegacyShell(path) {
+			continue
+		}
+		return fmt.Errorf("legacy conflict: %s is not a verified legacy launcher and will be preserved; inspect it explicitly before installation", path)
 	}
 	return nil
+}
+
+func (m *manager) migrateLegacyShell() error {
+	path := filepath.Join(m.bin, "cage_xtmapper.sh")
+	if !exists(path) {
+		return nil
+	}
+	if !knownLegacyShell(path) {
+		return fmt.Errorf("legacy launcher changed or is not recognized; preserved: %s", path)
+	}
+	if m.state == nil || m.state.Release == nil {
+		return fmt.Errorf("cannot migrate a legacy launcher without an active managed release")
+	}
+	suffix, err := randomID()
+	if err != nil {
+		return err
+	}
+	backup := path + ".legacy-backup-" + suffix
+	if exists(backup) {
+		return fmt.Errorf("legacy backup path already exists; preserved: %s", backup)
+	}
+	if err := os.Rename(path, backup); err != nil {
+		return err
+	}
+	if err := syncDir(m.bin); err != nil {
+		return err
+	}
+	m.migrated = append(m.migrated, backup)
+	return nil
+}
+
+func sameReleaseFiles(r *ownedRelease, files map[string][]byte) bool {
+	if r == nil || len(r.Inventory) != len(files)+2 {
+		return false
+	}
+	for name, data := range files {
+		record, ok := r.Inventory[name]
+		if !ok || record.SHA256 != release.Digest(data) {
+			return false
+		}
+	}
+	return r.Inventory["."].Mode != 0 && r.Inventory["LICENSES"].Mode != 0
 }
 
 func (m *manager) tree(base string, r *ownedRelease, partial bool) error {
@@ -653,6 +714,11 @@ func (m *manager) change(operation, archive string) error {
 	if err != nil {
 		return err
 	}
+	if m.prefix == "" {
+		if err := ensureRuntimeDependencies(manifest.RuntimeRequirements); err != nil {
+			return err
+		}
+	}
 	if !exists(m.root) {
 		if operation != "install" {
 			return fmt.Errorf("update requires an existing managed installation")
@@ -673,8 +739,17 @@ func (m *manager) change(operation, archive string) error {
 		if err := m.active(); err != nil {
 			return err
 		}
+		if m.state.Release != nil && operation == "install" {
+			operation = "update"
+		}
 		if (m.state.Release != nil) != (operation == "update") {
 			return fmt.Errorf("invalid %s for the current installation state", operation)
+		}
+		if m.state.Release != nil && m.state.Release.ID == manifest.ReleaseID {
+			if sameReleaseFiles(m.state.Release, files) {
+				return m.migrateLegacyShell()
+			}
+			return fmt.Errorf("release ID is already active but archive content differs; refusing replacement")
 		}
 		if err := m.begin(operation, manifest); err != nil {
 			return err
@@ -716,7 +791,10 @@ func (m *manager) change(operation, archive string) error {
 	if err := m.checkpoint("after-commit"); err != nil {
 		return err
 	}
-	return m.finish()
+	if err := m.finish(); err != nil {
+		return err
+	}
+	return m.migrateLegacyShell()
 }
 
 func (m *manager) uninstall() error {

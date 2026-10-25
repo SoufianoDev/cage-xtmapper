@@ -37,10 +37,11 @@ func TestLifecycleAndStableLock(t *testing.T) {
 			t.Fatalf("status modified %s", path)
 		}
 	}
-	h.run("install", h.v1, 1)
-	_, stderr := h.run("update", h.v1, 1)
-	if strings.Contains(stderr, "Incomplete transaction") {
-		t.Fatal(stderr)
+	stateBeforeRepeat := readFile(t, filepath.Join(h.root, "state.json"))
+	h.run("install", h.v1, 0)
+	h.run("update", h.v1, 0)
+	if !bytes.Equal(stateBeforeRepeat, readFile(t, filepath.Join(h.root, "state.json"))) {
+		t.Fatal("repeating the active release changed installation state")
 	}
 	h.onlyRelease(h.id1)
 	h.run("update", h.v2, 0)
@@ -209,6 +210,43 @@ func TestLegacyRefusal(t *testing.T) {
 	if string(readFile(t, path)) != "added after install\n" {
 		t.Fatal("uninstall removed legacy data")
 	}
+}
+
+func TestKnownLegacyShellMigratesAutomatically(t *testing.T) {
+	h := newHarness(t, false)
+	path := filepath.Join(h.bin, "cage_xtmapper.sh")
+	legacy := []byte("#!/usr/bin/env bash\nBOOT_WAIT_SECONDS=120\n# cage_xtmapper legacy launcher\n# xtr.keymapper.server.RemoteServiceShell\n")
+	writeFile(t, path, legacy, 0755)
+	stdout, _ := h.run("install", h.v1, 0)
+	assertAbsent(t, path)
+	if !strings.Contains(stdout, "Migrated legacy launcher to backup:") {
+		t.Fatal(stdout)
+	}
+	entries, err := os.ReadDir(h.bin)
+	must(t, err)
+	found := false
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "cage_xtmapper.sh.legacy-backup-") {
+			found = true
+			if !bytes.Equal(readFile(t, filepath.Join(h.bin, entry.Name())), legacy) {
+				t.Fatal("legacy backup content changed")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("legacy shell launcher was not preserved as a backup")
+	}
+	h.onlyRelease(h.id1)
+}
+
+func TestInstallAutomaticallyUpdatesNewerRelease(t *testing.T) {
+	h := newHarness(t, false)
+	h.run("install", h.v1, 0)
+	h.run("install", h.v2, 0)
+	if h.active() != "releases/"+h.id2 {
+		t.Fatal("install did not activate the newer release")
+	}
+	h.onlyRelease(h.id2)
 }
 
 func TestUninstallPreservesUnrelatedData(t *testing.T) {
