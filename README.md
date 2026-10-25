@@ -106,6 +106,8 @@ More XtMapper guides cover [refresh rate](https://xtr126.github.io/XtMapper-docs
 
 The Go launcher re-executes `/proc/self/exe` for its private compositor role. Cage and wlroots link into that same ELF. A kernel pipe carries events directly from compositor stdout to the Android transport; diagnostics use stderr.
 
+The checked-in native sources under `native-src/` are authoritative. `build/source/` is generated staging that `build.sh` reconstructs on each run; do not edit it as a source of record. Change `native-src/` and rebuild instead.
+
 `XTMAPPER_BOOT_WAIT_SECONDS` accepts positive decimal seconds, up to `2^31`; an unset or empty value means 120. The window options set `XTMAPPER_WIDTH`, `XTMAPPER_HEIGHT`, and `XTMAPPER_REFRESH`. Window decorations default to disabled through `WLR_NO_DECORATION=1`.
 
 ## License
