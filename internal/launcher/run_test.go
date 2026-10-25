@@ -3,6 +3,7 @@ package launcher
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestShutdownCausePreservesInitiatingKind(t *testing.T) {
@@ -45,5 +46,33 @@ func TestFailureResultRecordsCauseBeforeReturning(t *testing.T) {
 	cause.mark(143, shutdownSignal)
 	if code, ok := cause.result(); !ok || code != 127 {
 		t.Fatalf("shutdown result after a late signal = (%d, %v), want (127, true)", code, ok)
+	}
+}
+
+
+func TestPrepareStartupStartsBootDeadlineAfterContainerStart(t *testing.T) {
+	const bootWait = 1
+	delay := 150 * time.Millisecond
+	transport := transport{
+		stopSession: func(context.Context) error {
+			time.Sleep(delay)
+			return nil
+		},
+		startContainer: func(context.Context) error {
+			time.Sleep(delay)
+			return nil
+		},
+	}
+
+	started := time.Now()
+	deadline, err := prepareStartup(context.Background(), transport, bootWait)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remaining := time.Until(deadline); remaining < 900*time.Millisecond {
+		t.Fatalf("Android boot budget after preparation = %s; want close to %d second", remaining, bootWait)
+	}
+	if elapsed := time.Since(started); elapsed < 2*delay {
+		t.Fatalf("preparation did not run both steps: elapsed %s", elapsed)
 	}
 }
