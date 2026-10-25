@@ -7,15 +7,48 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/Xtr126/cage-xtmapper/internal/installlock"
 )
 
+type shutdownCauseKey struct{}
+
+type shutdownCause struct {
+	once  sync.Once
+	ready chan struct{}
+	code  int
+}
+
+func (c *shutdownCause) mark(code int) {
+	c.once.Do(func() {
+		c.code = code
+		close(c.ready)
+	})
+}
+
+func (c *shutdownCause) result() (int, bool) {
+	select {
+	case <-c.ready:
+		return c.code, true
+	default:
+		return 0, false
+	}
+}
+
+func markShutdownCause(ctx context.Context, code int) {
+	if cause, ok := ctx.Value(shutdownCauseKey{}).(*shutdownCause); ok {
+		cause.mark(code)
+	}
+}
+
 // Run owns signals before starting any external command.
 func Run(cfg Config) int {
-	ctx, cancel := context.WithCancel(context.Background())
+	cause := &shutdownCause{ready: make(chan struct{})}
+	base := context.WithValue(context.Background(), shutdownCauseKey{}, cause)
+	ctx, cancel := context.WithCancel(base)
 	defer cancel()
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
@@ -25,16 +58,22 @@ func Run(cfg Config) int {
 	go func() { done <- run(ctx, cfg) }()
 	select {
 	case s := <-signals:
-		cancel()
-		<-done
-		return signalStatus(s)
-	case code := <-done:
-		select {
-		case s := <-signals:
-			return signalStatus(s)
-		default:
+		if code, ok := cause.result(); ok {
+			cancel()
+			<-done
 			return code
 		}
+		cancel()
+		<-done
+		if initiatingCode, ok := cause.result(); ok {
+			return initiatingCode
+		}
+		return signalStatus(s)
+	case code := <-done:
+		if initiatingCode, ok := cause.result(); ok {
+			return initiatingCode
+		}
+		return code
 	}
 }
 
@@ -92,13 +131,21 @@ func reportError(err error) {
 	}
 }
 
-func supervise(ctx context.Context, cfg Config, t transport) int {
+func supervise(ctx context.Context, cfg Config, t transport) (result int) {
+	parentCtx := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	var owned []*child
 	defer func() {
 		cancel() // Start all group cleanups together, including a blocked probe.
 		for _, c := range owned {
 			c.finish()
+		}
+	}()
+	// Record an established failure before cleanup begins. A later SIGTERM
+	// must not replace the exit status that caused the shutdown.
+	defer func() {
+		if result != 0 && parentCtx.Err() == nil {
+			markShutdownCause(parentCtx, result)
 		}
 	}()
 
@@ -161,17 +208,57 @@ func supervise(ctx context.Context, cfg Config, t transport) int {
 	owned = append(owned, remote)
 	evtRead.Close()
 
-	left, right := comp.dead, remote.dead
-	for left != nil || right != nil {
-		select {
-		case <-left:
-			left = nil
-		case <-right:
-			right = nil
-		case <-ctx.Done():
-			return 1 // Run preserves the initiating signal's status.
+	// Let the peer a short interval to observe EOF/broken pipe and exit
+	// naturally. If it stays alive, cancel its process group and preserve
+	// the first exit as the initiating cause rather than reporting our own
+	// cleanup signal as the pipeline result.
+	select {
+	case <-comp.dead:
+		if waitForPeerExit(ctx, remote) {
+			return pipelineExitStatus(comp, remote)
 		}
+		if ctx.Err() != nil {
+			return 1
+		}
+		code := comp.code
+		cancel()
+		<-remote.dead
+		return code
+	case <-remote.dead:
+		if waitForPeerExit(ctx, comp) {
+			return pipelineExitStatus(comp, remote)
+		}
+		if ctx.Err() != nil {
+			return 1
+		}
+		code := remote.code
+		cancel()
+		<-comp.dead
+		return code
+	case <-ctx.Done():
+		return 1 // Run preserves the initiating signal's status.
 	}
+}
+
+const runtimePeerExitGrace = 250 * time.Millisecond
+
+func waitForPeerExit(ctx context.Context, peer *child) bool {
+	timer := time.NewTimer(runtimePeerExitGrace)
+	defer timer.Stop()
+	select {
+	case <-peer.dead:
+		return true
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return peer.exited()
+	}
+}
+
+func pipelineExitStatus(comp, remote *child) int {
+	// Preserve pipefail's rightmost-nonzero precedence when both commands
+	// exit independently. Cleanup-induced termination of the peer is not
+	// an independent pipeline failure and must not mask the initiating exit.
 	if remote.code != 0 {
 		return remote.code
 	}
