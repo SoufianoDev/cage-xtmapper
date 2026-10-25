@@ -153,32 +153,44 @@ func TestContainerStartAuthenticationPTY(t *testing.T) {
 
 	dir := t.TempDir()
 	sudoLog := filepath.Join(dir, "sudo.log")
+	sudoCached := filepath.Join(dir, "sudo.cached")
 	waydroidLog := filepath.Join(dir, "waydroid.log")
 	sudo := filepath.Join(dir, "sudo")
 	waydroid := filepath.Join(dir, "waydroid")
 	sudoBody := `#!/bin/sh
-printf 'mode=%s
-' "$MOCK_SUDO_MODE" >> "$SUDO_LOG"
-if [ ! -t 0 ] || [ ! -t 1 ] || [ ! -t 2 ]; then
-    echo 'sudo mock did not inherit a terminal' >&2
-    exit 90
+printf 'mode=%s argv=%s\n' "$MOCK_SUDO_MODE" "$*" >> "$SUDO_LOG"
+if [ "$1" = "-v" ]; then
+    if [ ! -t 0 ] || [ ! -t 1 ] || [ ! -t 2 ]; then
+        echo 'sudo mock did not inherit a terminal' >&2
+        exit 90
+    fi
+    old_stty=$(stty -g </dev/tty) || exit 93
+    stty -echo </dev/tty
+    printf 'Password: ' >/dev/tty
+    if [ "$MOCK_SUDO_MODE" = cancel ]; then
+        exec sleep 600
+    fi
+    IFS= read -r password </dev/tty || exit 91
+    stty "$old_stty" </dev/tty
+    printf '\n' >/dev/tty
+    if [ "$password" != "$MOCK_PASSWORD" ]; then
+        echo 'auth=rejected' >> "$SUDO_LOG"
+        exit 92
+    fi
+    echo 'auth=accepted' >> "$SUDO_LOG"
+    : > "$SUDO_CACHED"
+    exit 0
 fi
-old_stty=$(stty -g </dev/tty) || exit 93
-stty -echo </dev/tty
-printf 'Password: ' >/dev/tty
-if [ "$MOCK_SUDO_MODE" = cancel ]; then
-    exec sleep 600
+if [ "$1" = "-n" ]; then
+    if [ ! -f "$SUDO_CACHED" ]; then
+        echo 'sudo mock has no cached credentials' >&2
+        exit 92
+    fi
+    shift
+    exec "$@"
 fi
-IFS= read -r password </dev/tty || exit 91
-stty "$old_stty" </dev/tty
-printf '
-' >/dev/tty
-if [ "$password" != "$MOCK_PASSWORD" ]; then
-    echo 'auth=rejected' >> "$SUDO_LOG"
-    exit 92
-fi
-echo 'auth=accepted' >> "$SUDO_LOG"
-exec "$@"
+echo 'unexpected sudo arguments' >&2
+exit 94
 `
 	if err := os.WriteFile(sudo, []byte(sudoBody), 0o755); err != nil {
 		t.Fatal(err)
@@ -207,6 +219,7 @@ exec "$@"
 				"XTMAPPER_PTY_WAYDROID="+waydroid,
 				"MOCK_SUDO_MODE="+tc.mode,
 				"MOCK_PASSWORD=test-secret",
+				"SUDO_CACHED="+sudoCached,
 				"SUDO_LOG="+sudoLog,
 				"WAYDROID_LOG="+waydroidLog,
 			)
