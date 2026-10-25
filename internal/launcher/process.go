@@ -28,19 +28,32 @@ type child struct {
 	dead        chan struct{}
 	code        int // Published before dead closes; every observer can read it.
 	cleanupOnce sync.Once
-	stopCleanup func() bool
+	stopCleanup  func() bool
+	processGroup bool
 }
 
 func startGroup(ctx context.Context, cmd *exec.Cmd) (*child, error) {
+	return startChild(ctx, cmd, true)
+}
+
+// startForeground runs a short interactive command in the caller's process
+// group. This keeps it in the terminal's foreground group for sudo prompts.
+func startForeground(ctx context.Context, cmd *exec.Cmd) (*child, error) {
+	return startChild(ctx, cmd, false)
+}
+
+func startChild(ctx context.Context, cmd *exec.Cmd, processGroup bool) (*child, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if processGroup {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
 	cmd.WaitDelay = cleanupKillGrace
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("%s: %w", cmd.Path, err)
 	}
-	c := &child{cmd: cmd, dead: make(chan struct{})}
+	c := &child{cmd: cmd, dead: make(chan struct{}), processGroup: processGroup}
 	go func() {
 		err := cmd.Wait()
 		c.code = exitStatusOf(cmd)
@@ -76,7 +89,18 @@ func exitStatusOf(cmd *exec.Cmd) int {
 }
 
 func (c *child) kill(sig syscall.Signal) error {
-	return syscall.Kill(-c.cmd.Process.Pid, sig)
+	pid := c.cmd.Process.Pid
+	if c.processGroup {
+		pid = -pid
+	}
+	return syscall.Kill(pid, sig)
+}
+
+func (c *child) cleanupComplete() bool {
+	if !c.exited() {
+		return false
+	}
+	return !c.processGroup || errors.Is(c.kill(0), syscall.ESRCH)
 }
 
 // finish also joins cleanup already started by cancellation.
@@ -87,14 +111,14 @@ func (c *child) finish() {
 
 func (c *child) cleanup() {
 	c.cleanupOnce.Do(func() {
-		if c.exited() && errors.Is(c.kill(0), syscall.ESRCH) {
+		if c.cleanupComplete() {
 			return
 		}
 		_ = c.kill(syscall.SIGTERM)
 		deadline := time.Now().Add(cleanupTermGrace)
 		for time.Now().Before(deadline) {
 			// A reaped leader can still leave descendants in its process group.
-			if c.exited() && errors.Is(c.kill(0), syscall.ESRCH) {
+			if c.cleanupComplete() {
 				return
 			}
 			time.Sleep(20 * time.Millisecond)
@@ -104,9 +128,9 @@ func (c *child) cleanup() {
 		// leader may be reaped long before its descendants die, and callers
 		// observe the group immediately after cleanup returns.
 		deadline = time.Now().Add(cleanupKillGrace)
-		for !(c.exited() && errors.Is(c.kill(0), syscall.ESRCH)) {
+		for !c.cleanupComplete() {
 			if time.Now().After(deadline) {
-				fmt.Fprintf(os.Stderr, "Error: cleanup did not complete for process group %d\n", c.cmd.Process.Pid)
+				fmt.Fprintf(os.Stderr, "Error: cleanup did not complete for process %d\n", c.cmd.Process.Pid)
 				break
 			}
 			time.Sleep(20 * time.Millisecond)
@@ -115,12 +139,22 @@ func (c *child) cleanup() {
 }
 
 func runBounded(ctx context.Context, cmd *exec.Cmd, timeout time.Duration) (int, error) {
+	return runWithTimeout(ctx, cmd, timeout, true)
+}
+
+// runBoundedForeground keeps interactive authentication commands in the
+// caller's process group so terminal job control does not stop password reads.
+func runBoundedForeground(ctx context.Context, cmd *exec.Cmd, timeout time.Duration) (int, error) {
+	return runWithTimeout(ctx, cmd, timeout, false)
+}
+
+func runWithTimeout(ctx context.Context, cmd *exec.Cmd, timeout time.Duration, processGroup bool) (int, error) {
 	if timeout <= 0 {
 		return -1, ErrTimedOut
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	c, err := startGroup(ctx, cmd)
+	c, err := startChild(ctx, cmd, processGroup)
 	if err != nil {
 		return -1, err
 	}
@@ -139,6 +173,11 @@ func runBounded(ctx context.Context, cmd *exec.Cmd, timeout time.Duration) (int,
 func runInherit(ctx context.Context, cmd *exec.Cmd, timeout time.Duration) (int, error) {
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return runBounded(ctx, cmd, timeout)
+}
+
+func runInheritForeground(ctx context.Context, cmd *exec.Cmd, timeout time.Duration) (int, error) {
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return runBoundedForeground(ctx, cmd, timeout)
 }
 
 func runCapture(ctx context.Context, cmd *exec.Cmd, timeout time.Duration) (string, error) {
