@@ -1,71 +1,103 @@
 # Building Cage XtMapper
 
-These instructions describe the `v0.3.0` branch, which builds Cage 0.3.0 with wlroots 0.20.2.
+This checkout builds the Cage 0.3.0 / wlroots 0.20.2 line as one Go/cgo ELF, `cage-xtmapper`. Ubuntu 26.04 on amd64 is the CI and release build baseline. The older branches retain their separate workflows.
 
-## Host dependencies
+## Host Dependencies
 
-- [Arch](https://github.com/cage-kiosk/cage/blob/eaeab71ffa3ab5884df09c5664c00e368ca2585e/.github/workflows/main.yml#L32): `pacman -Syu xcb-util-wm seatd git clang meson libinput libdrm mesa libxkbcommon wayland wayland-protocols xorg-server-xwayland scdoc hwdata`
-- [Alpine](https://github.com/cage-kiosk/cage/blob/eaeab71ffa3ab5884df09c5664c00e368ca2585e/.github/workflows/main.yml#L26): `apk add build-base xcb-util-wm-dev libseat-dev clang git eudev-dev mesa-dev libdrm-dev libinput-dev libxkbcommon-dev pixman-dev wayland-dev meson wayland-protocols xwayland-dev scdoc-doc hwdata`
-- Fedora: `dnf install gcc gnupg2 meson libwayland-server libxkbcommon-devel libdisplay-info libliftoff hwdata lcms2 libdrm libinput libseat vulkan libwayland-client pixman-devel wayland-devel wayland-protocols-devel libdrm-devel libxcb-devel xcb-util-renderutil-devel seatd libseat-devel systemd-devel git mesa-libEGL-devel mesa-libgbm-devel mesa-libGLES-devel vulkan-loader-devel`
-- Ubuntu/Debian: `sudo apt build-dep wlroots`
+The build needs Go 1.24 or newer, Clang and binutils, Meson, Ninja, pkg-config, Bison, and the native development packages selected by `install_deps.sh`. Project-owned tooling and tests use Go and shell; Cage and wlroots use C compiled with Clang.
 
-To install host packages on Debian or Ubuntu, Fedora, Arch, or Alpine, use the optional helper:
+The helper supports Debian/Ubuntu, Fedora, Arch, and Alpine:
 
-```sh
+```bash
 ./install_deps.sh --dry-run
 sudo ./install_deps.sh
 ```
 
-Review the package list printed by `--dry-run` first. The installer is never run automatically by `build.sh`.
+The helper prints its package list in dry-run mode. `build.sh` never invokes the package installer automatically. Package names vary by distribution; the helper is the maintained list.
 
-## Build and install
+Wayland 1.24, libxkbcommon 1.8, and Pixman 0.46 use bundled sources. Other dependencies use the system or pinned fallbacks according to Meson. The build records the selected versions and configuration. Bundled libdrm and libxkbcommon retain compiler warnings without promoting them to errors.
 
-Clone the selected branch with its submodules, then build:
+## Build
 
-```sh
+Clone the branch you intend to work on, including its submodules:
+
+```bash
 git clone --recurse-submodules -b <branch> https://github.com/Xtr126/cage-xtmapper
 cd cage-xtmapper
 ./build.sh
 ```
 
-If the repository is already cloned, initialize its submodules with:
+For an existing checkout:
 
-```sh
+```bash
 git submodule update --init --recursive
+./build.sh
 ```
 
-After a successful build, install the binary and launcher from the repository root:
+The default is a release build. Build output stays under ignored `build/`:
 
-```sh
-cd build/installed/usr/local/bin/
-sudo install -Dm755 ./cage_xtmapper /usr/local/bin/
-sudo install -Dm755 ./cage_xtmapper.sh /usr/local/bin/
+| Path | Contents |
+|---|---|
+| `build/source/` | Source assembled from the committed native submodule trees. |
+| `build/meson/` | Meson state, native objects, and archives. |
+| `build/native/pkgconfig/cage-xtmapper-native.pc` | Generated cgo link contract derived from Ninja's dependency graph. |
+| `build/go/cage-xtmapper` | Final application ELF. |
+| `build/go/provenance.txt` | Build mode, native commits, input fingerprint, Go version. |
+| `build/go/build-info.json` | Build-time source/ELF digests, commits, toolchains, Meson options, dependencies, runtime requirements, license notices. |
+| `build/installed/usr/local/bin/cage-xtmapper` | One-file build staging area; this is not the managed system installation. |
+
+Go's build cache does not track external native archive changes, so `build.sh` uses `CC=clang CGO_ENABLED=1 go build -a`. The native input fingerprint includes Clang's version so a compiler change rebuilds Meson's configuration and native objects. Native build or Go link failure preserves the previous successfully staged application.
+
+Run an uninstalled build as a regular user:
+
+```bash
+./build/go/cage-xtmapper --help
+./build/go/cage-xtmapper
 ```
 
-## Debug builds
+## Debug Builds
 
-Use a debug build when investigating build or runtime errors:
+Use debug mode when investigating build or runtime errors:
 
-```sh
+```bash
 ./build.sh --debug
+./build/go/cage-xtmapper
 ```
 
-This compiles and installs Cage and its embedded wlroots in debug mode. Debug builds enable Cage's verbose logging by default. To configure the debug build without compiling or installing, run `./build.sh --debug --dry-run`. Running `./build.sh` without `--debug` switches the build back to release mode.
+This builds Cage and wlroots in debug mode and enables Cage's verbose logging. `./build.sh --debug --dry-run` assembles sources and configures Meson without compiling or staging the application. Running `./build.sh` again switches back to release mode. Both flags may appear in either order.
 
-Release builds log errors by default. Cage's runtime `-D` flag also enables verbose logging when running a release build.
+## Package And Install Locally
 
-## Pinned source inputs
+After building, create a local archive with an explicit version and unused output filename:
 
-The build uses the pinned Cage and wlroots fork commits as submodules, plus wlroots dependency archives and Meson wrap files. Source builds need both submodule checkouts; the dependency archives remain included for offline dependency fallback.
+```bash
+go run ./tools/release package --version v0.3.0-local --output build/releases/cage-xtmapper-v0.3.0-local.tar
+go run ./tools/release verify build/releases/cage-xtmapper-v0.3.0-local.tar
+sudo ./install.sh install --archive build/releases/cage-xtmapper-v0.3.0-local.tar
+```
 
-Check the dependency archives from the repository root with:
+Use `update` for an existing managed installation. The packager refuses stale source/ELF digests or an existing output archive. Rebuild after changing runtime sources, source tools, or build scripts. Its manifest records a dirty checkout when applicable; a commit ID alone does not describe uncommitted changes.
 
-```sh
+The archive contains only the ELF, manifest, checksums, and license notices. The source-only installer compiles `tools/install` using the matching checkout's Go module; keep `install.sh`, `go.mod`, `tools/`, and `internal/` together. [Installation And Recovery](docs/installation.md) defines its commands, ownership model, and transaction guarantees.
+
+License collection uses pinned native source notices and the installed Go toolchain notice. If the native link selects LittleCMS's static GPL plugins, packaging also needs their installed component notices and complete GPL-3 text. Unknown static libraries without a license rule stop metadata generation rather than producing an incomplete archive.
+
+## Pinned Source Inputs
+
+Cage and wlroots are submodules pinned by this repository's gitlinks. Their development branches are recorded in `.gitmodules`: Cage `codex/xtmapper-v0.3.0` and wlroots `codex/xtmapper-v0.20.2`.
+
+The build requires clean, committed fork trees matching the parent index. It assembles those commits under `build/source/` and keeps Meson state under `build/meson/`. Dependency archives and Meson wraps remain maintained inputs; do not regenerate exported source patches.
+
+Verify the dependency archives with:
+
+```bash
 sha256sum --check SHA256SUMS
 ```
 
-`SHA256SUMS` records the SHA-256 digest for each retained dependency archive. When an archive is intentionally replaced, update its digest and review the corresponding version and source URL in the wrap files.
+When intentionally replacing an archive, update its digest and review its version/source URL in the wrap file. [CONTRIBUTING.md](CONTRIBUTING.md) covers fork changes and verification.
 
-This branch pins Cage from [Xtr126/cage](https://github.com/Xtr126/cage), branch `codex/xtmapper-v0.3.0`, and wlroots from [Xtr126/wlroots-xtmapper](https://github.com/Xtr126/wlroots-xtmapper), branch `codex/xtmapper-v0.20.2`. The build assembles the pinned commits under ignored `build/source/` and keeps Meson state separately under `build/meson/`. For fork changes and CI checks, see [CONTRIBUTING.md](CONTRIBUTING.md).
+## CI And Release Packaging
 
-Pull requests run on Ubuntu 26.04, verify archive checksums, run ShellCheck and shell syntax checks, exercise the mocked installer/build/launcher checks, and compile Cage and wlroots. Release packaging uses the same Ubuntu 26.04 baseline and attaches `cage-xtmapper-<tag>.tar` to a draft release for that tag.
+CI verifies archive checksums, shell syntax/style, shell fixtures, the real native/Go build, and Go formatting/vet/race tests, including filesystem/runtime-lock integration. Tests use isolated prefixes and headless compositors. Waydroid/ADB transport tests use mocks.
+
+The tag workflow uses the same Ubuntu 26.04 baseline, runs the runtime/installer checks, and builds an allowlisted `cage-xtmapper-<tag>.tar` for the matching draft release. No reproducible-build or wider distribution/architecture compatibility guarantee is implied by the recorded provenance.

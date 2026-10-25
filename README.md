@@ -1,85 +1,113 @@
-# Usage
-Download pre-built binaries from releases or build from source (recommended) as explained below.
+# Cage XtMapper
 
-Run the [cage_xtmapper.sh](./cage_xtmapper.sh) script as the regular user:  
+Cage XtMapper runs Waydroid in a Cage window and forwards keyboard, mouse, and touchpad input to [XtMapper](https://github.com/Xtr126/XtMapper) on Android. You can set the window size and refresh rate, show a title bar, and switch mouse input between XtMapper and Waydroid.
 
-    cage_xtmapper.sh
+This checkout builds Cage 0.3.0 and wlroots 0.20.2 into one Linux executable, `cage-xtmapper`, with a Go launcher.
 
+## Before You Start
 
-# Features
-- Change refresh rate or FPS of waydroid
-https://xtr126.github.io/XtMapper-docs/waydroid/2-fps/
-- Touchpad input
-https://xtr126.github.io/XtMapper-docs/waydroid/3-touchpad/
-- Customize window
-https://xtr126.github.io/XtMapper-docs/waydroid/4-window-customization/
-- How to fullscreen cage-xtmapper
-https://xtr126.github.io/XtMapper-docs/waydroid/5-fullscreen/
-- Disable colored logcat output in the terminal
-https://xtr126.github.io/XtMapper-docs/waydroid/6-disable-logging/
-- Passthrough mouse input to waydroid instead of to XtMapper  
-Use F10 or any other key defined in  [togglekey.h](https://github.com/Xtr126/cage/blob/master/togglekey.h) to toggle between XtMapper or Waydroid handling mouse input.  
+- Set up Waydroid and install the XtMapper Android APK.
+- Use a Wayland desktop, Steam gaming session, or a supported DRM session from a TTY.
+- Choose a build compatible with your system. The CI and release build baseline is Ubuntu 26.04 on amd64. Each release manifest records its architecture, shared-library requirements, and build host.
+- Run the application as your regular user. The default transport invokes `sudo` for Waydroid container and Android shell operations.
 
-# Some tips
-### SteamOS session/ Bazzite steam gaming mode
-In desktop mode, go to Start menu > System, then right click on Konsole/Terminal and add to steam. Now you can launch Terminal or Konsole in Steam and run cage_xtmapper.sh.
+The `v0.2.0` and `v0.1.5` branches retain their own build and installation procedures. Follow the [v0.2.0 instructions](https://github.com/Xtr126/cage-xtmapper/blob/v0.2.0/README.md) or [v0.1.5 instructions](https://github.com/Xtr126/cage-xtmapper/blob/v0.1.5/README.md) for those versions.
 
-### Using cage's DRM backend
-To use Cage's DRM backend, start `cage_xtmapper.sh` from a TTY. The maintained Cage fork removes session-dependent seat setup; to change that behavior, edit `seat.c` in the Cage fork, commit it, update the submodule pin, and rebuild.
+## Install Or Update
 
-### Fix invisible cursor issue
-Enable cursor on subsurface if cursor is invisible:
-  
-    waydroid prop set persist.waydroid.cursor_on_subsurface true
+Use a release archive in the [managed release format](docs/installation.md#release-format), together with a matching source checkout. The source-only installer requires Bash, Go 1.24 or newer, and Linux. Installation is system-wide.
 
-> [!NOTE]
-cage v0.1.5 has a two cursors on-screen issue.
+From the source checkout, install your downloaded or locally built archive:
 
-### Disable fake touch (persist.waydroid.fake_touch)
-If you have enabled fake touch it might [interfere with mouse movement](https://github.com/Xtr126/XtMapper/discussions/184). Clear it by running:
-    
-    waydroid prop set persist.waydroid.fake_touch ""
+```bash
+sudo ./install.sh install --archive /path/to/cage-xtmapper-VERSION.tar
+./install.sh status
+```
 
+The installer stores releases under `/opt/cage-xtmapper` and creates `/usr/local/bin/cage-xtmapper`. It checks the archive without running the downloaded application as root. Obtain archives from a trusted source; SHA-256 checksums verify integrity, not publisher authenticity.
 
+To replace an existing managed installation, close Cage XtMapper and run:
 
+```bash
+sudo ./install.sh update --archive /path/to/cage-xtmapper-NEW-VERSION.tar
+```
 
-# Download and install
-To download and install from [pre-builts](https://github.com/Xtr126/cage-xtmapper/releases), paste the following into a terminal.
+An active application makes conflicting installation operations fail with a busy error. Successful updates remove the obsolete managed release. If an operation is interrupted, inspect and recover it:
 
-### Step 1
-Download v0.3.0 - Cage 0.3.0 with wlroots 0.20.2 for newer distributions: Arch, Fedora 44+
+```bash
+./install.sh status
+sudo ./install.sh recover
+```
 
-    curl -fOL --retry 3 --retry-delay 3  "https://github.com/Xtr126/cage-xtmapper/releases/latest/download/cage-xtmapper-v0.3.0.tar"
+Existing `cage_xtmapper` or `cage_xtmapper.sh` files cause a migration conflict because the old manual installation procedure did not record ownership. Inspect those files and move them explicitly after establishing what owns them, then retry. Old archives containing `usr/local/bin/` use the older branch's installer instructions.
 
-Download v0.2.0 - Cage 0.2.0 with wlroots 0.18.3: Debian 13, Ubuntu 25/26
+See [Installation And Recovery](docs/installation.md) for the commit point, ownership rules, error codes, test paths, and uninstall behavior.
 
-    curl -fOL --retry 3 --retry-delay 3  "https://github.com/Xtr126/cage-xtmapper/releases/latest/download/cage-xtmapper-v0.2.0.tar"
+## Run
 
-Download v0.1.5 - Cage 0.1.5 with wlroots 0.17.x for older distributions: Ubuntu 24.04 (noble), Debian 13 (Trixie)
+```bash
+cage-xtmapper
+```
 
-    curl -fOL --retry 3 --retry-delay 3  "https://github.com/Xtr126/cage-xtmapper/releases/latest/download/cage-xtmapper-v0.1.5.tar"
+Set a window size and a 60 Hz refresh rate:
 
-You will encounter compile-time errors by picking the wrong version.
-### Step 2
-To install from the downloaded tarball:
+```bash
+cage-xtmapper --window-width 1280 --window-height 720 --refresh-mhz 60000
+```
 
-    tar xvf cage-xtmapper*.tar
-    cd usr/local/bin
-    sudo install -Dm755 ./cage_xtmapper /usr/local/bin/
-    sudo install -Dm755 ./cage_xtmapper.sh /usr/local/bin/
-    
-# Build from source
+| Option | Behavior |
+|---|---|
+| `--window-width PIXELS` | Set a positive output width. |
+| `--window-height PIXELS` | Set a positive output height. |
+| `--refresh-mhz MHZ` | Set the refresh rate in millihertz; `60000` means 60 Hz. |
+| `--window-show-title-bar` | Show window decorations. |
+| `--print-output-info` | Print the parent Wayland output's modes to stderr and exit. |
+| `--adb` | Use ADB for Android shell commands; Waydroid still launches the UI. |
+| `--xtmapper-args ARG...` | Append all remaining arguments to XtMapper's default `--wayland-client` argument. |
+| `-h`, `--help` | Show help. |
 
-Three branches are maintained:
+Press **F10** to switch mouse handling between XtMapper and Waydroid. The Cage fork's [`togglekey.h`](forks/cage/togglekey.h) defines this key.
 
-- `v0.3.0` builds Cage 0.3.0 with wlroots 0.20.2. Ubuntu 26.04 is the supported CI and release build baseline for this branch. Ubuntu 24.04 compatibility is not guaranteed; use the older branch appropriate for your distribution. It needs Wayland 1.24+, wayland-protocols 1.47+, libdrm 2.4.129+, libxkbcommon 1.8+, and Pixman 0.46+. Use it for distributions whose system packages meet these versions; the build also includes pinned fallback sources for these libraries.
-- `v0.2.0` builds Cage 0.2.0 with wlroots 0.18.3 for distributions whose system libraries cannot support v0.3.0. See the [v0.2.0 compatibility and build instructions](https://github.com/Xtr126/cage-xtmapper/blob/v0.2.0/README.md).
-- `v0.1.5` builds Cage 0.1.5 with wlroots 0.17.x.
+## Common Setup Issues
 
-Choose the branch that matches the distribution you need to support.
+### Steam Gaming Mode
 
-    git clone --recurse-submodules -b <branch> https://github.com/Xtr126/cage-xtmapper
-    cd cage-xtmapper
-    ./build.sh
+In desktop mode, add your terminal application to Steam. Open it from the gaming session and run `cage-xtmapper`. The launcher uses `GAMESCOPE_WAYLAND_DISPLAY` when the session provides it.
 
-See [BUILDING.md](BUILDING.md) for dependency setup, installation, debug builds, and details about the pinned source inputs. For contribution and backport guidance, see [CONTRIBUTING.md](CONTRIBUTING.md); contributor credits and provenance are listed in [CONTRIBUTORS.md](CONTRIBUTORS.md).
+### Invisible Cursor
+
+Enable Waydroid's subsurface cursor:
+
+```bash
+waydroid prop set persist.waydroid.cursor_on_subsurface true
+```
+
+### Mouse Movement Conflicts
+
+Waydroid's fake-touch setting can interfere with mouse movement. Clear it if enabled:
+
+```bash
+waydroid prop set persist.waydroid.fake_touch ""
+```
+
+### Boot Timeout
+
+The launcher waits up to 120 seconds for Android by default. To allow longer:
+
+```bash
+XTMAPPER_BOOT_WAIT_SECONDS=180 cage-xtmapper
+```
+
+More XtMapper guides cover [refresh rate](https://xtr126.github.io/XtMapper-docs/waydroid/2-fps/), [touchpad input](https://xtr126.github.io/XtMapper-docs/waydroid/3-touchpad/), [window customization](https://xtr126.github.io/XtMapper-docs/waydroid/4-window-customization/), [fullscreen](https://xtr126.github.io/XtMapper-docs/waydroid/5-fullscreen/), and [logcat output](https://xtr126.github.io/XtMapper-docs/waydroid/6-disable-logging/).
+
+## For Developers
+
+[BUILDING.md](BUILDING.md) covers dependencies, the pinned native sources, debug builds, local packaging, and build artifacts. [CONTRIBUTING.md](CONTRIBUTING.md) lists the required checks and fork workflow.
+
+The Go launcher re-executes `/proc/self/exe` for its private compositor role. Cage and wlroots link into that same ELF. A kernel pipe carries events directly from compositor stdout to the Android transport; diagnostics use stderr.
+
+`XTMAPPER_BOOT_WAIT_SECONDS` accepts positive decimal seconds, up to `2^31`; an unset or empty value means 120. The window options set `XTMAPPER_WIDTH`, `XTMAPPER_HEIGHT`, and `XTMAPPER_REFRESH`. Window decorations default to disabled through `WLR_NO_DECORATION=1`.
+
+## License
+
+The project uses the [MIT License](LICENSE). Bundled native code and the Go runtime retain their own notices in each archive's `LICENSES/` directory. The manifest lists the licenses for the components actually linked, including any selected system static libraries. See [CONTRIBUTORS.md](CONTRIBUTORS.md) for credits and provenance.

@@ -22,11 +22,20 @@ When a fix also applies to `v0.2.0` or `v0.1.5`, make a separate backport commit
 For build, launcher, or installer changes, run:
 
 ```sh
-bash -n build.sh install_deps.sh cage_xtmapper.sh tests/*.sh
-shellcheck build.sh install_deps.sh cage_xtmapper.sh tests/*.sh
+for script in build.sh install.sh install_deps.sh cage_xtmapper.sh tests/*.sh; do bash -n "$script"; done
+shellcheck build.sh install.sh install_deps.sh cage_xtmapper.sh tests/*.sh
 bash tests/test-install-deps.sh
 bash tests/test-build.sh
 bash tests/test-launcher.sh
+./build.sh --debug
+test -z "$(gofmt -l cmd internal tools tests)"
+export CC=clang PKG_CONFIG_PATH="$PWD/build/native/pkgconfig"
+go vet ./...
+go test -race -count=1 ./...
 ```
+
+Use `-count=1`: integration suites build or use a separate application, which Go's test-result cache does not track reliably. `tests/integration/install/` uses real filesystem operations and processes under private temporary home-directory prefixes; its basic archive fixtures contain an inert host ELF. Runtime-lock cases use the built project ELF with a real headless compositor and mock Android tools. They require an unprivileged test user. See [docs/installation.md](docs/installation.md) for the journal/ownership and lock contracts.
+
+The shell launcher remains a behavior reference for its tests. Installed and packaged applications use the single `cage-xtmapper` ELF. Keep installer tooling in the source checkout and preserve the release allowlist.
 
 Pull requests should explain the user-visible behavior, list checks run, and include relevant dependency fork commits before the parent pin. Preserve prior contributor credit when adapting code; see [CONTRIBUTORS.md](CONTRIBUTORS.md).
