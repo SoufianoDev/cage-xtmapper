@@ -171,3 +171,73 @@ func TestFailedBootProbeOutputIsDiscarded(t *testing.T) {
 		t.Fatal("remote service started after a failed boot probe")
 	}
 }
+
+
+// TestRuntimePeerExitCancelsOtherSide prevents either pipeline child from
+// keeping the launcher alive after its peer has failed.
+func TestRuntimePeerExitCancelsOtherSide(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		mode       string
+		compositor string
+		wantCode   int
+	}{
+		{
+			name: "compositor exits first",
+			mode: "compositor",
+			compositor: `#!/bin/sh
+printf '%s\n' "$$" > "$MOCK_LOG/cage.pid"
+while [ ! -s "$MOCK_LOG/remote-command" ]; do sleep 0.01; done
+exit 9
+`,
+			wantCode: 9,
+		},
+		{
+			name: "remote exits first",
+			mode: "remote",
+			compositor: `#!/bin/sh
+printf '%s\n' "$$" > "$MOCK_LOG/cage.pid"
+while [ ! -s "$MOCK_LOG/remote-command" ]; do sleep 0.01; done
+exec sleep 600
+`,
+			wantCode: 7,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tools, logs := testEnv(t)
+			if err := os.WriteFile(tools.SelfExe, []byte(tc.compositor), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			waydroid := `#!/bin/sh
+case "$1 $2" in
+    'session stop'|'container start') exit 0 ;;
+    'shell getprop')
+        [ "$3" = sys.boot_completed ] && printf '1\n' || printf 'x86_64\n'
+        ;;
+    'shell pm') printf 'package:/data/app/xtmapper/base.apk\n' ;;
+    'shell --')
+        printf '%s\n' "$5" > "$MOCK_LOG/remote-command"
+        printf '%s\n' "$$" > "$MOCK_LOG/remote.pid"
+        if [ "$MOCK_PEER_MODE" = remote ]; then exit 7; fi
+        exec sleep 600
+        ;;
+    *) exit 1 ;;
+esac
+`
+			if err := os.WriteFile(tools.Waydroid, []byte(waydroid), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("MOCK_PEER_MODE", tc.mode)
+			start := time.Now()
+			code, _ := runLauncher(t, launcher.Config{Tools: tools})
+			if code != tc.wantCode {
+				t.Fatalf("exit %d, want %d", code, tc.wantCode)
+			}
+			if elapsed := time.Since(start); elapsed > 4*time.Second {
+				t.Fatalf("peer exit took too long: %s", elapsed)
+			}
+			assertStopped(t, waitPID(t, filepath.Join(logs, "cage.pid")))
+			assertStopped(t, waitPID(t, filepath.Join(logs, "remote.pid")))
+		})
+	}
+}
