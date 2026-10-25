@@ -79,7 +79,7 @@ func failureResult(ctx context.Context, code int) int {
 	return code
 }
 
-func startupTimeoutError(seconds int, phase string) error {
+func startupTimeoutError(seconds int64, phase string) error {
 	return fmt.Errorf("Android startup did not complete within %d seconds while %s", seconds, phase)
 }
 
@@ -190,7 +190,7 @@ func reportError(err error) {
 	}
 }
 
-func supervise(ctx context.Context, cfg Config, t transport, startupDeadline time.Time, startupSeconds int) (result int) {
+func supervise(ctx context.Context, cfg Config, t transport, startupDeadline time.Time, startupSeconds int64) (result int) {
 	if !time.Now().Before(startupDeadline) {
 		code := failureResult(ctx, 1)
 		reportError(startupTimeoutError(startupSeconds, "preparing XtMapper"))
@@ -366,7 +366,7 @@ func deadlineExpired(ctx context.Context, deadline time.Time) bool {
 	return errors.Is(ctx.Err(), context.DeadlineExceeded) || !time.Now().Before(deadline)
 }
 
-func setupWithDeadline(ctx context.Context, t transport, useADB bool, args []string, deadline time.Time, startupSeconds int) (*exec.Cmd, error) {
+func setupWithDeadline(ctx context.Context, t transport, useADB bool, args []string, deadline time.Time, startupSeconds int64) (*exec.Cmd, error) {
 	if startupSeconds <= 0 {
 		return nil, errors.New("XTMAPPER_BOOT_WAIT_SECONDS must be a positive integer")
 	}
