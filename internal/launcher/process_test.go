@@ -67,7 +67,6 @@ func TestContainerStartIsNonInteractiveWithoutForegroundTerminal(t *testing.T) {
 	}
 }
 
-
 func TestContainerStartAuthenticationPTY(t *testing.T) {
 	if mode := os.Getenv("XTMAPPER_SUDO_PTY_HELPER"); mode != "" {
 		if !terminalForeground() {
