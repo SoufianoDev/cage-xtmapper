@@ -18,6 +18,7 @@ import (
 
 var sudoMock = `#!/usr/bin/env bash
 printf 'sudo %s\n' "$*" >>"$MOCK_LOG/sudo.log"
+if [[ ${1:-} == -n ]]; then shift; fi
 exec "$@"
 `
 
