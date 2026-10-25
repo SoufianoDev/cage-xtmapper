@@ -76,6 +76,7 @@ jobs:
           gofmt_files="$(gofmt -l cmd internal tools tests)"
           if [[ -n "$gofmt_files" ]]; then
             printf 'Go files need gofmt:\n%s\n' "$gofmt_files" >&2
+            while IFS= read -r file; do gofmt -d "$file"; done <<< "$gofmt_files"
             exit 1
           fi
           export CC=clang PKG_CONFIG_PATH="$PWD/build/native/pkgconfig"
