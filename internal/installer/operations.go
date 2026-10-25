@@ -172,46 +172,88 @@ func knownLegacyShell(path string) bool {
 		strings.Contains(content, "RemoteServiceShell") && strings.Contains(content, "BOOT_WAIT_SECONDS")
 }
 
+func knownLegacyBinary(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 ||
+		info.Size() < 64 || info.Size() > release.MaxBytes {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	_, err = release.ELFArch(data)
+	return err == nil
+}
+
 func (m *manager) legacyConflicts() error {
+	legacyScript := filepath.Join(m.bin, "cage_xtmapper.sh")
+	scriptRecognized := knownLegacyShell(legacyScript)
 	for _, name := range []string{"cage_xtmapper", "cage_xtmapper.sh"} {
 		path := filepath.Join(m.bin, name)
 		if !exists(path) {
 			continue
 		}
-		if name == "cage_xtmapper.sh" && knownLegacyShell(path) {
+		if name == "cage_xtmapper.sh" && scriptRecognized {
 			continue
 		}
-		return fmt.Errorf("legacy conflict: %s is not a verified legacy launcher and will be preserved; inspect it explicitly before installation", path)
+		if name == "cage_xtmapper" && scriptRecognized && knownLegacyBinary(path) {
+			continue
+		}
+		return fmt.Errorf("legacy conflict: %s is not a verified legacy installation file and will be preserved; inspect it explicitly before installation", path)
 	}
 	return nil
 }
 
 func (m *manager) migrateLegacyShell() error {
-	path := filepath.Join(m.bin, "cage_xtmapper.sh")
-	if !exists(path) {
+	script := filepath.Join(m.bin, "cage_xtmapper.sh")
+	binary := filepath.Join(m.bin, "cage_xtmapper")
+	scriptExists, binaryExists := exists(script), exists(binary)
+	if !scriptExists && !binaryExists {
 		return nil
 	}
-	if !knownLegacyShell(path) {
-		return fmt.Errorf("legacy launcher changed or is not recognized; preserved: %s", path)
+	if !scriptExists || !knownLegacyShell(script) {
+		return fmt.Errorf("legacy launcher changed or is not recognized; preserved: %s", script)
+	}
+	if binaryExists && !knownLegacyBinary(binary) {
+		return fmt.Errorf("legacy binary is not a recognized executable ELF; preserved: %s", binary)
 	}
 	if m.state == nil || m.state.Release == nil {
-		return fmt.Errorf("cannot migrate a legacy launcher without an active managed release")
+		return fmt.Errorf("cannot migrate legacy launchers without an active managed release")
 	}
 	suffix, err := randomID()
 	if err != nil {
 		return err
 	}
-	backup := path + ".legacy-backup-" + suffix
-	if exists(backup) {
-		return fmt.Errorf("legacy backup path already exists; preserved: %s", backup)
+	paths := []string{script}
+	if binaryExists {
+		paths = append(paths, binary)
 	}
-	if err := os.Rename(path, backup); err != nil {
-		return err
+	type renamedPath struct {
+		original string
+		backup   string
+	}
+	var renamed []renamedPath
+	for _, path := range paths {
+		backup := path + ".legacy-backup-" + suffix
+		if exists(backup) {
+			return fmt.Errorf("legacy backup path already exists; preserved: %s", backup)
+		}
+		if err := os.Rename(path, backup); err != nil {
+			for i := len(renamed) - 1; i >= 0; i-- {
+				_ = os.Rename(renamed[i].backup, renamed[i].original)
+			}
+			_ = syncDir(m.bin)
+			return fmt.Errorf("could not preserve legacy file %s: %w", path, err)
+		}
+		renamed = append(renamed, renamedPath{original: path, backup: backup})
 	}
 	if err := syncDir(m.bin); err != nil {
 		return err
 	}
-	m.migrated = append(m.migrated, backup)
+	for _, item := range renamed {
+		m.migrated = append(m.migrated, item.backup)
+	}
 	return nil
 }
 

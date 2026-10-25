@@ -29,7 +29,7 @@ curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-t
 
 The bootstrap downloads a prebuilt helper and the matching release archive for Linux amd64 or arm64. It checks both SHA-256 files before passing the archive to the transactional installer. Missing shared libraries are installed automatically through APT on Debian/Ubuntu; on other distributions, the installer reports missing libraries rather than guessing package names. Waydroid and the XtMapper Android APK must already be set up.
 
-The installer stores releases under `/opt/cage-xtmapper` and creates `/usr/local/bin/cage-xtmapper`. Updates switch releases atomically and remove only files recorded as installer-owned. A recognized legacy `cage_xtmapper.sh` launcher is moved to a uniquely named backup after activation. Unknown files and legacy binaries are preserved and block installation until inspected. SHA-256 checksums detect corruption but do not authenticate the publisher.
+The installer stores releases under `/opt/cage-xtmapper` and creates `/usr/local/bin/cage-xtmapper`. Updates switch releases atomically and remove only files recorded as installer-owned. When a recognized old `cage_xtmapper.sh` launcher is paired with a valid executable ELF at `cage_xtmapper`, both are moved to uniquely named backups after activation. Unknown files and unpaired legacy binaries are preserved and block installation until inspected. SHA-256 checksums detect corruption but do not authenticate the publisher.
 
 Developers can exercise install, update, repeated-install, status, and uninstall locally without publishing a GitHub Release:
 

@@ -212,29 +212,43 @@ func TestLegacyRefusal(t *testing.T) {
 	}
 }
 
-func TestKnownLegacyShellMigratesAutomatically(t *testing.T) {
+func TestKnownLegacyShellAndBinaryMigrateAutomatically(t *testing.T) {
 	h := newHarness(t, false)
-	path := filepath.Join(h.bin, "cage_xtmapper.sh")
+	scriptPath := filepath.Join(h.bin, "cage_xtmapper.sh")
+	binaryPath := filepath.Join(h.bin, "cage_xtmapper")
 	legacy := []byte("#!/usr/bin/env bash\nBOOT_WAIT_SECONDS=120\n# cage_xtmapper legacy launcher\n# xtr.keymapper.server.RemoteServiceShell\n")
-	writeFile(t, path, legacy, 0755)
+	writeFile(t, scriptPath, legacy, 0755)
+	testExecutable, err := os.Executable()
+	must(t, err)
+	binary, err := os.ReadFile(testExecutable)
+	must(t, err)
+	writeFile(t, binaryPath, binary, 0755)
+
 	stdout, _ := h.run("install", h.v1, 0)
-	assertAbsent(t, path)
+	assertAbsent(t, scriptPath)
+	assertAbsent(t, binaryPath)
 	if !strings.Contains(stdout, "Migrated legacy launcher to backup:") {
 		t.Fatal(stdout)
 	}
 	entries, err := os.ReadDir(h.bin)
 	must(t, err)
-	found := false
+	foundScript, foundBinary := false, false
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), "cage_xtmapper.sh.legacy-backup-") {
-			found = true
+		switch {
+		case strings.HasPrefix(entry.Name(), "cage_xtmapper.sh.legacy-backup-"):
+			foundScript = true
 			if !bytes.Equal(readFile(t, filepath.Join(h.bin, entry.Name())), legacy) {
-				t.Fatal("legacy backup content changed")
+				t.Fatal("legacy shell backup content changed")
+			}
+		case strings.HasPrefix(entry.Name(), "cage_xtmapper.legacy-backup-"):
+			foundBinary = true
+			if !bytes.Equal(readFile(t, filepath.Join(h.bin, entry.Name())), binary) {
+				t.Fatal("legacy binary backup content changed")
 			}
 		}
 	}
-	if !found {
-		t.Fatal("legacy shell launcher was not preserved as a backup")
+	if !foundScript || !foundBinary {
+		t.Fatalf("legacy pair was not preserved: script=%t binary=%t", foundScript, foundBinary)
 	}
 	h.onlyRelease(h.id1)
 }
