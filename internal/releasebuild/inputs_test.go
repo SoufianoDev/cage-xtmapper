@@ -252,7 +252,6 @@ func TestVerifyFresh(t *testing.T) {
 	}
 }
 
-
 func TestNativeSourceDigestRejectsEscapingSymlink(t *testing.T) {
 	repo := t.TempDir()
 	tree := filepath.Join(repo, "native-src/cage")
