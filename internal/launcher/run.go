@@ -272,7 +272,10 @@ func supervise(ctx context.Context, cfg Config, t transport) (result int) {
 	}
 }
 
-const runtimePeerExitGrace = 250 * time.Millisecond
+// Give a peer enough time to drain bytes already buffered in the kernel pipe
+// and observe EOF. A sub-second grace can truncate valid input when a consumer
+// is delayed during startup; cleanup remains bounded when the peer ignores EOF.
+const runtimePeerExitGrace = 2 * time.Second
 
 func waitForPeerExit(ctx context.Context, peer *child) bool {
 	timer := time.NewTimer(runtimePeerExitGrace)

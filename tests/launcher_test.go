@@ -327,8 +327,8 @@ func TestRemoteFailureSurfaces(t *testing.T) {
 	}
 }
 
-// TestEventStreamBinaryPreserved relays a >64KiB payload (bigger than
-// the kernel pipe buffer, containing NUL bytes) through the
+// TestEventStreamBinaryPreserved relays a multi-megabyte payload (larger than typical Linux pipe capacity,
+// containing NUL bytes) through the
 // compositor -> remote stdin relay while the remote side starts
 // reading late: byte-identical, no deadlock, no launcher buffering.
 func TestEventStreamBinaryPreserved(t *testing.T) {
@@ -337,7 +337,7 @@ func TestEventStreamBinaryPreserved(t *testing.T) {
 
 	payloadDir := t.TempDir()
 	payloadFile := filepath.Join(payloadDir, "payload")
-	payload := make([]byte, 0, 200_000)
+	payload := make([]byte, 0, 2<<20)
 	for i := 0; i < cap(payload); i++ {
 		payload = append(payload, byte(i*7+i/13))
 	}
