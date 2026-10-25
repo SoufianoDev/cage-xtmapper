@@ -16,24 +16,18 @@ import (
 	"github.com/Xtr126/cage-xtmapper/internal/release"
 )
 
-// errStale reports that the recorded build inputs no longer match the tree.
+// errStale is returned when recorded provenance no longer matches the tree.
 var errStale = errors.New("build provenance is stale; run ./build.sh")
 
-// nativeTrees maps manifest native keys to their repository-owned source trees.
 var nativeTrees = map[string]string{
 	"cage":    "native-src/cage",
 	"wlroots": "native-src/wlroots-xtmapper",
 }
 
-// collectInventory records every input below roots (paths relative to the
-// repository) as sorted, NUL-separated records:
-//
-//	path \0 f \0 (x|-) \0 <content digest>
-//	path \0 l \0 <symlink target>
-//
-// Only the executable bits of the mode are recorded so umask and ownership
-// differences cannot change the result; symlinks are never followed; any other
-// file type is rejected rather than silently skipped.
+// collectInventory records every input below roots as sorted NUL-separated
+// records: "path\0f\0(x|-)\0<digest>" for files, "path\0l\0<target>" for
+// symlinks. Only executable bits of the mode are recorded so umask and
+// ownership cannot change the result; other file types are rejected.
 func collectInventory(repo string, roots []string) ([]string, error) {
 	record := func(path string) (string, error) {
 		info, err := os.Lstat(path)
@@ -110,8 +104,8 @@ func recordsDigest(records []string) string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
-// NativeSourceDigest fingerprints one repository-owned native tree by content,
-// paths, executable bits and symlink targets.
+// NativeSourceDigest fingerprints one native tree by content, paths,
+// executable bits and symlink targets.
 func NativeSourceDigest(repo, tree string) (string, error) {
 	records, err := collectInventory(repo, []string{tree})
 	if err != nil {
@@ -121,10 +115,8 @@ func NativeSourceDigest(repo, tree string) (string, error) {
 }
 
 // NativeInputDigest fingerprints every input that can change the native build
-// and the final ELF: both native trees, the ORIGINS provenance record, Meson
-// wraps, dependency archives, build.sh, and the toolchain identity and build
-// type. build.sh stages the same trees it fingerprints, so the digest always
-// describes the source the build consumes.
+// and the final ELF. build.sh stages the same trees it fingerprints, so the
+// digest always describes the source the build consumes.
 func NativeInputDigest(repo, buildType string) (string, error) {
 	if buildType == "" {
 		return "", fmt.Errorf("missing build type")
@@ -149,8 +141,8 @@ func NativeInputDigest(repo, buildType string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-// NativeOrigins reads native-src/ORIGINS and returns the imported source
-// commits (manifest native_commits) and origin records (native_origins).
+// NativeOrigins reads native-src/ORIGINS into native_commits and
+// native_origins manifest values.
 func NativeOrigins(repo string) (map[string]string, map[string]release.NativeOrigin, error) {
 	data, err := os.ReadFile(filepath.Join(repo, "native-src/ORIGINS"))
 	if err != nil {
@@ -189,8 +181,8 @@ func NativeOrigins(repo string) (map[string]string, map[string]release.NativeOri
 	return commits, origins, nil
 }
 
-// VerifyFresh re-derives the recorded build inputs from the repository and
-// reports whether build-info.json still describes the staged application.
+// VerifyFresh re-derives the recorded build inputs and reports whether
+// build-info.json still describes the staged application.
 func VerifyFresh(repo string, manifest *release.Manifest) error {
 	if manifest.SchemaVersion != release.ManifestSchemaVersion {
 		return fmt.Errorf("unsupported build metadata schema %d; run ./build.sh", manifest.SchemaVersion)

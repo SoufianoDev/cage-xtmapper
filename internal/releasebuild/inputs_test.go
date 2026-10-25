@@ -55,7 +55,6 @@ func TestNativeSourceDigest(t *testing.T) {
 		t.Fatal("digest depends on traversal order")
 	}
 
-	// Content change.
 	if err := os.WriteFile(filepath.Join(first, "a.c"), []byte("changed"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +65,6 @@ func TestNativeSourceDigest(t *testing.T) {
 	if changed == digest {
 		t.Fatal("digest ignores content changes")
 	}
-	// Executable-bit change.
 	if err := os.Chmod(filepath.Join(first, "a.c"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +75,6 @@ func TestNativeSourceDigest(t *testing.T) {
 	if executable == changed {
 		t.Fatal("digest ignores executable bit")
 	}
-	// Symlink target change.
 	if err := os.Symlink("a.c", filepath.Join(first, "link")); err != nil {
 		t.Fatal(err)
 	}
@@ -243,14 +240,12 @@ func TestVerifyFresh(t *testing.T) {
 	if err := VerifyFresh(repo, manifest); err != nil {
 		t.Fatalf("fresh build rejected: %v", err)
 	}
-	// A native content change after staging must be reported as stale.
 	if err := os.WriteFile(filepath.Join(repo, "native-src/cage/meson.build"), []byte("project('cage') # edited\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := VerifyFresh(repo, manifest); !errors.Is(err, errStale) {
 		t.Fatalf("expected stale error, got %v", err)
 	}
-	// Legacy schema metadata must be refused, not silently accepted.
 	manifest.SchemaVersion = 1
 	if err := VerifyFresh(repo, manifest); err == nil || !strings.Contains(err.Error(), "schema") {
 		t.Fatalf("expected schema error, got %v", err)

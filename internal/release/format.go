@@ -30,18 +30,14 @@ var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var originPattern = regexp.MustCompile(`^https://\S+$`)
 var glibcPattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)+$`)
 
-// ValidCommit reports whether s is a full 40-hex commit id.
 func ValidCommit(s string) bool { return commitPattern.MatchString(s) }
 
-// ValidDigest reports whether s is a lowercase hex SHA-256 digest.
 func ValidDigest(s string) bool { return digestPattern.MatchString(s) }
 
-// ValidOriginURL reports whether s is a non-empty https origin URL.
 func ValidOriginURL(s string) bool { return originPattern.MatchString(s) }
 
-// ManifestSchemaVersion is the current build-info manifest schema. Schema 1
-// (pre-fingerprint releases) carries no native source digests or origin records
-// and is accepted only as legacy input.
+// ManifestSchemaVersion is the current manifest schema; schema 1 predates
+// native digests and origins and is accepted only as legacy input.
 const ManifestSchemaVersion = 2
 
 type Manifest struct {
@@ -64,7 +60,6 @@ type Manifest struct {
 	Licenses            []License               `json:"licenses"`
 }
 
-// NativeOrigin is the declared upstream origin of a vendored native source tree.
 type NativeOrigin struct {
 	URL      string `json:"url"`
 	Revision string `json:"revision"`
