@@ -70,6 +70,23 @@ func SourceDigest(repo string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
+type pluginLicenseRule struct {
+	component string
+	license   string
+	header    string
+}
+
+func littleCMSPluginLicenseRule(archive string) (pluginLicenseRule, bool) {
+	switch archive {
+	case "liblcms2_fast_float.a":
+		return pluginLicenseRule{component: "LittleCMS-fast-float", license: "GPL-3.0-only", header: "lcms2_fast_float.h"}, true
+	case "liblcms2_threaded.a":
+		return pluginLicenseRule{component: "LittleCMS-threaded", license: "GPL-3.0-or-later", header: "lcms2_threaded.h"}, true
+	default:
+		return pluginLicenseRule{}, false
+	}
+}
+
 func licenseTexts(repo string, archives []string) ([]release.License, map[string]string, error) {
 	source := filepath.Join(repo, "build/source/cage-0.3.0")
 	type rule struct{ component, license, path string }
@@ -155,14 +172,21 @@ func licenseTexts(repo string, archives []string) ([]release.License, map[string
 			}
 			add("libdrm", "MIT and source notices", []byte(notices.String()))
 		case "liblcms2_fast_float.a", "liblcms2_threaded.a":
-			notice, err := firstFile("/usr/share/doc/liblcms2-dev/copyright", "/usr/share/licenses/lcms2/COPYING")
+			rule, ok := littleCMSPluginLicenseRule(name)
+			if !ok {
+				return nil, nil, fmt.Errorf("no license rule for LittleCMS plugin archive: %s", name)
+			}
+			notice, err := firstFile(
+				filepath.Join("/usr/include", rule.header),
+				filepath.Join("/usr/include/lcms2", rule.header),
+			)
 			if err != nil {
 				return nil, nil, err
 			}
-			if err := addFile("LittleCMS-plugins", "GPL-3.0-only (see component notices)", notice); err != nil {
+			if err := addFile(rule.component, rule.license, notice); err != nil {
 				return nil, nil, err
 			}
-			if err := addFile("GPL-3", "GPL-3.0-only", "/usr/share/common-licenses/GPL-3"); err != nil {
+			if err := addFile("GPL-3", "GPL-3.0 text", "/usr/share/common-licenses/GPL-3"); err != nil {
 				return nil, nil, err
 			}
 		default:
