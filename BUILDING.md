@@ -15,7 +15,7 @@ sudo ./install_deps.sh
 
 The helper prints its package list in dry-run mode. `build.sh` never invokes the package installer automatically. Package names vary by distribution; the helper is the maintained list.
 
-Wayland 1.24, libxkbcommon 1.8, and Pixman 0.46 use bundled sources. Other dependencies use the system or pinned fallbacks according to Meson. The build records the selected versions and configuration. Bundled libdrm and libxkbcommon retain compiler warnings without promoting them to errors.
+Wayland 1.24, libxkbcommon 1.8, and Pixman 0.46 use bundled sources. Other dependencies use the system or pinned fallbacks according to Meson. The build records the selected versions and configuration. Bundled Wayland, libdrm and libxkbcommon retain compiler warnings without promoting them to errors.
 
 ## Build
 

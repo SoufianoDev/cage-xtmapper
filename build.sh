@@ -115,6 +115,8 @@ meson_setup_args=(
     -Dprefix=/usr/local
     "-Dwlroots:buildtype=$build_type"
     "-Dforce_fallback_for=wayland-server,wayland-client,xkbcommon,pixman-1"
+
+    -Dwayland:werror=false
     -Dlibdrm:werror=false
     -Dlibxkbcommon:werror=false
 )
@@ -153,7 +155,7 @@ printf 'build_type=%s\nfingerprint=%s\n%s\n' \
     "$current_fingerprint" \
     "$(go version)" > "$build_root/go/provenance.txt"
 (cd -- "$script_dir" && go run ./tools/release record-build) || fail "recording release build metadata failed"
-# Stage only the application; Meson's install tree also contains development tools.
+
 rm -rf -- "$build_root/installed"
 installed_bin="$build_root/installed/usr/local/bin"
 mkdir -p -- "$installed_bin"
