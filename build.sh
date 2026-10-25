@@ -114,7 +114,7 @@ meson_setup_args=(
     -Ddefault_library=static
     -Dprefix=/usr/local
     "-Dwlroots:buildtype=$build_type"
-    "-Dforce_fallback_for=wayland-server,wayland-client,xkbcommon,pixman-1"
+    "-Dforce_fallback_for=wayland-server,wayland-client,wayland-protocols,xkbcommon,pixman-1"
 
     -Dwayland:werror=false
     -Dlibdrm:werror=false

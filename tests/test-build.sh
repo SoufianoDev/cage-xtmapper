@@ -79,7 +79,7 @@ fi
 grep -q '^meson setup ' "$MOCK_LOG"
 grep -q '^meson setup .* --buildtype=release ' "$MOCK_LOG" || fail 'fresh Meson setup did not request release buildtype'
 grep -q -- '-Dwlroots:buildtype=release' "$MOCK_LOG" || fail 'wlroots did not receive release buildtype'
-grep -q -- '-Dforce_fallback_for=wayland-server,wayland-client,xkbcommon,pixman-1' "$MOCK_LOG" || fail 'bundled native dependencies were not selected'
+grep -q -- '-Dforce_fallback_for=wayland-server,wayland-client,wayland-protocols,xkbcommon,pixman-1' "$MOCK_LOG" || fail 'bundled native dependencies were not selected'
 if grep -q '^meson compile ' "$MOCK_LOG"; then fail 'dry-run invoked compile'; fi
 if grep -q '^meson install ' "$MOCK_LOG"; then fail 'dry-run invoked install'; fi
 if grep -q '^go build ' "$MOCK_LOG"; then fail 'dry-run invoked Go'; fi
