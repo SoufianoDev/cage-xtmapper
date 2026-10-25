@@ -109,7 +109,11 @@ func (t transport) getprop(ctx context.Context, name string, timeout time.Durati
 // packagePathProbe returns the first `package:<path>` line of a
 // `pm path` probe ("" when absent).
 func (t transport) packagePathProbe(ctx context.Context, pkg string) (string, error) {
-	out, err := runCapture(ctx, t.probeCmd("pm", "path", pkg), apkProbeTimeout)
+	return t.packagePathProbeWithTimeout(ctx, pkg, apkProbeTimeout)
+}
+
+func (t transport) packagePathProbeWithTimeout(ctx context.Context, pkg string, timeout time.Duration) (string, error) {
+	out, err := runCapture(ctx, t.probeCmd("pm", "path", pkg), timeout)
 	if err != nil {
 		return "", err
 	}

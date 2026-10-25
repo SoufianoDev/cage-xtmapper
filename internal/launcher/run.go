@@ -72,6 +72,17 @@ func markPipelineExitCause(ctx context.Context, code int) {
 	}
 }
 
+func failureResult(ctx context.Context, code int) int {
+	if code != 0 {
+		markShutdownCause(ctx, code)
+	}
+	return code
+}
+
+func startupTimeoutError(seconds int, phase string) error {
+	return fmt.Errorf("Android startup did not complete within %d seconds while %s", seconds, phase)
+}
+
 // Run owns signals before starting any external command.
 func Run(cfg Config) int {
 	cause := &shutdownCause{ready: make(chan struct{})}
@@ -111,42 +122,66 @@ func run(ctx context.Context, cfg Config) int {
 		return printOutputInfo(ctx, cfg)
 	}
 
+	bootWait := BootWaitSeconds()
+	if bootWait <= 0 {
+		code := failureResult(ctx, 1)
+		reportError(errors.New("XTMAPPER_BOOT_WAIT_SECONDS must be a positive integer"))
+		return code
+	}
+	// This deadline is shared by stopping the session, starting the container,
+	// boot polling, ABI discovery, and APK lookup. It is not reused once the
+	// remote XtMapper process has started.
+	startupDeadline := time.Now().Add(time.Duration(bootWait) * time.Second)
+	startupCtx, cancelStartup := context.WithDeadline(ctx, startupDeadline)
+	defer cancelStartup()
+
 	var t transport
 	if cfg.UseADB {
 		p, ok := findTool(cfg.Tools.ADB, "adb")
 		if !ok {
+			code := failureResult(ctx, 127)
 			fmt.Fprintln(os.Stderr, "Error: adb was not found in PATH")
-			return 127
+			return code
 		}
 		cfg.Tools.ADB = p
 		t = adbTransport(&cfg)
 	} else {
 		p, ok := findTool(cfg.Tools.Sudo, "sudo")
 		if !ok {
+			code := failureResult(ctx, 127)
 			fmt.Fprintln(os.Stderr, "Error: sudo was not found in PATH")
-			return 127
+			return code
 		}
 		cfg.Tools.Sudo = p
 		p, ok = findTool(cfg.Tools.Waydroid, "waydroid")
 		if !ok {
+			code := failureResult(ctx, 127)
 			fmt.Fprintln(os.Stderr, "Error: waydroid was not found in PATH")
-			return 127
+			return code
 		}
 		cfg.Tools.Waydroid = p
 		t = waydroidTransport(&cfg)
 	}
 
 	if !cfg.UseADB {
-		if err := t.stopSession(ctx); err != nil {
+		if err := t.stopSession(startupCtx); err != nil {
+			if errors.Is(startupCtx.Err(), context.DeadlineExceeded) {
+				err = startupTimeoutError(bootWait, "stopping the Waydroid session")
+			}
+			code := failureResult(ctx, 1)
 			reportError(err)
-			return 1
+			return code
 		}
-		if err := t.startContainer(ctx); err != nil {
+		if err := t.startContainer(startupCtx); err != nil {
+			if errors.Is(startupCtx.Err(), context.DeadlineExceeded) {
+				err = startupTimeoutError(bootWait, "starting the Waydroid container")
+			}
+			code := failureResult(ctx, 1)
 			reportError(err)
-			return 1
+			return code
 		}
 	}
-	return supervise(ctx, cfg, t)
+	return supervise(ctx, cfg, t, startupDeadline, bootWait)
 }
 
 func reportError(err error) {
@@ -155,7 +190,12 @@ func reportError(err error) {
 	}
 }
 
-func supervise(ctx context.Context, cfg Config, t transport) (result int) {
+func supervise(ctx context.Context, cfg Config, t transport, startupDeadline time.Time, startupSeconds int) (result int) {
+	if !time.Now().Before(startupDeadline) {
+		code := failureResult(ctx, 1)
+		reportError(startupTimeoutError(startupSeconds, "preparing XtMapper"))
+		return code
+	}
 	parentCtx := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	var owned []*child
@@ -175,8 +215,9 @@ func supervise(ctx context.Context, cfg Config, t transport) (result int) {
 
 	evtRead, evtWrite, err := os.Pipe()
 	if err != nil {
+		code := failureResult(parentCtx, 1)
 		reportError(fmt.Errorf("could not create the event pipe: %w", err))
-		return 1
+		return code
 	}
 	defer evtRead.Close()
 	defer evtWrite.Close()
@@ -191,13 +232,14 @@ func supervise(ctx context.Context, cfg Config, t transport) (result int) {
 	compCmd.Stderr = os.Stderr
 	comp, err := startGroup(ctx, compCmd)
 	if err != nil {
+		code := failureResult(parentCtx, 1)
 		reportError(fmt.Errorf("could not start the compositor: %w", err))
-		return 1
+		return code
 	}
 	owned = append(owned, comp)
 	evtWrite.Close()
 
-	setupCtx, stopSetup := context.WithCancel(ctx)
+	setupCtx, stopSetup := context.WithDeadline(ctx, startupDeadline)
 	go func() {
 		select {
 		case <-comp.dead:
@@ -207,16 +249,19 @@ func supervise(ctx context.Context, cfg Config, t transport) (result int) {
 		case <-setupCtx.Done():
 		}
 	}()
-	remoteCmd, err := setup(setupCtx, t, cfg.UseADB, cfg.XtmapperArgs)
+	remoteCmd, err := setupWithDeadline(setupCtx, t, cfg.UseADB, cfg.XtmapperArgs, startupDeadline, startupSeconds)
 	stopSetup()
 	if err != nil {
 		if comp.exited() && comp.code != 0 {
+			markPipelineExitCause(parentCtx, comp.code)
 			return comp.code
 		}
+		code := failureResult(parentCtx, 1)
 		reportError(err)
-		return 1
+		return code
 	}
 	if comp.exited() && comp.code != 0 {
+		markPipelineExitCause(parentCtx, comp.code)
 		return comp.code
 	}
 
@@ -226,8 +271,9 @@ func supervise(ctx context.Context, cfg Config, t transport) (result int) {
 	remoteCmd.Stderr = os.Stderr
 	remote, err := startGroup(ctx, remoteCmd)
 	if err != nil {
+		code := failureResult(parentCtx, 1)
 		reportError(fmt.Errorf("could not launch remote XtMapper: %w", err))
-		return 1
+		return code
 	}
 	owned = append(owned, remote)
 	evtRead.Close()
@@ -313,40 +359,86 @@ func setup(ctx context.Context, t transport, useADB bool, args []string) (*exec.
 		return nil, errors.New("XTMAPPER_BOOT_WAIT_SECONDS must be a positive integer")
 	}
 	deadline := time.Now().Add(time.Duration(bootWait) * time.Second)
+	return setupWithDeadline(ctx, t, useADB, args, deadline, bootWait)
+}
+
+func deadlineExpired(ctx context.Context, deadline time.Time) bool {
+	return errors.Is(ctx.Err(), context.DeadlineExceeded) || !time.Now().Before(deadline)
+}
+
+func setupWithDeadline(ctx context.Context, t transport, useADB bool, args []string, deadline time.Time, startupSeconds int) (*exec.Cmd, error) {
+	if startupSeconds <= 0 {
+		return nil, errors.New("XTMAPPER_BOOT_WAIT_SECONDS must be a positive integer")
+	}
 	for {
 		if err := ctx.Err(); err != nil {
+			if deadlineExpired(ctx, deadline) {
+				return nil, fmt.Errorf("Android did not finish booting within %d seconds", startupSeconds)
+			}
 			return nil, err
 		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			return nil, fmt.Errorf("Android did not finish booting within %d seconds", bootWait)
+			return nil, fmt.Errorf("Android did not finish booting within %d seconds", startupSeconds)
 		}
 		state, _ := t.getprop(ctx, "sys.boot_completed", min(getpropProbeTimeout, remaining))
 		if state == "1" && time.Now().Before(deadline) {
 			break
+		}
+		if deadlineExpired(ctx, deadline) {
+			return nil, fmt.Errorf("Android did not finish booting within %d seconds", startupSeconds)
 		}
 		timer := time.NewTimer(min(time.Second, max(0, time.Until(deadline))))
 		select {
 		case <-timer.C:
 		case <-ctx.Done():
 			timer.Stop()
+			if deadlineExpired(ctx, deadline) {
+				return nil, fmt.Errorf("Android did not finish booting within %d seconds", startupSeconds)
+			}
 			return nil, ctx.Err()
 		}
 	}
 
-	abi, err := t.getprop(ctx, "ro.product.cpu.abi", abiProbeTimeout)
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return nil, startupTimeoutError(startupSeconds, "determining the Android CPU ABI")
+	}
+	abi, err := t.getprop(ctx, "ro.product.cpu.abi", min(abiProbeTimeout, remaining))
 	if err != nil || abi == "" {
+		if deadlineExpired(ctx, deadline) {
+			return nil, startupTimeoutError(startupSeconds, "determining the Android CPU ABI")
+		}
 		return nil, errors.New("could not determine the Android CPU ABI")
 	}
 	for _, pkg := range PackageProbeOrder {
 		if err := ctx.Err(); err != nil {
+			if deadlineExpired(ctx, deadline) {
+				return nil, startupTimeoutError(startupSeconds, "locating the XtMapper APK")
+			}
 			return nil, err
 		}
-		apkPath, _ := t.packagePathProbe(ctx, pkg)
+		remaining = time.Until(deadline)
+		if remaining <= 0 {
+			return nil, startupTimeoutError(startupSeconds, "locating the XtMapper APK")
+		}
+		apkPath, probeErr := t.packagePathProbeWithTimeout(ctx, pkg, min(apkProbeTimeout, remaining))
+		if probeErr != nil {
+			if deadlineExpired(ctx, deadline) {
+				return nil, startupTimeoutError(startupSeconds, "locating the XtMapper APK")
+			}
+			continue
+		}
 		if apkPath != "" {
+			if !time.Now().Before(deadline) {
+				return nil, startupTimeoutError(startupSeconds, "locating the XtMapper APK")
+			}
 			command := buildRemoteCommand(useADB, deriveNativeLibPath(apkPath, abi), apkPath, args)
 			return t.remoteShellCmd(command), nil
 		}
+	}
+	if deadlineExpired(ctx, deadline) {
+		return nil, startupTimeoutError(startupSeconds, "locating the XtMapper APK")
 	}
 	return nil, errors.New("no installation of XtMapper was found")
 }
@@ -360,12 +452,16 @@ func printOutputInfo(ctx context.Context, cfg Config) int {
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	c, err := startGroup(ctx, cmd)
 	if err != nil {
+		code := failureResult(ctx, 1)
 		reportError(err)
-		return 1
+		return code
 	}
 	defer c.finish()
 	select {
 	case <-c.dead:
+		if c.code != 0 {
+			return failureResult(ctx, c.code)
+		}
 		return c.code
 	case <-ctx.Done():
 		return 1
