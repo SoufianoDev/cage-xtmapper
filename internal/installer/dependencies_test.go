@@ -4,12 +4,12 @@ import "testing"
 
 func TestDebianRuntimePackageMapping(t *testing.T) {
 	for library, want := range map[string]string{
-		"libc.so.6": "libc6",
+		"libc.so.6":              "libc6",
 		"libwayland-client.so.0": "libwayland-client0",
-		"libxkbcommon.so.0": "libxkbcommon0",
-		"libdrm.so.2": "libdrm2",
-		"libinput.so.10": "libinput10",
-		"libseat.so.1": "libseat1",
+		"libxkbcommon.so.0":      "libxkbcommon0",
+		"libdrm.so.2":            "libdrm2",
+		"libinput.so.10":         "libinput10",
+		"libseat.so.1":           "libseat1",
 	} {
 		if got := debianRuntimePackages[library]; got != want {
 			t.Errorf("package for %s = %q, want %q", library, got, want)
