@@ -379,3 +379,91 @@ exit 1
 		t.Fatal("remote service launched after a hung boot probe")
 	}
 }
+
+func TestStartupDeadlineCoversWaydroidLifecycle(t *testing.T) {
+	for _, phase := range []string{"stop", "container"} {
+		t.Run(phase, func(t *testing.T) {
+			tools, logs := testEnv(t)
+			t.Setenv("XTMAPPER_BOOT_WAIT_SECONDS", "2")
+			t.Setenv("MOCK_PHASE", phase)
+			waydroid := "#!/bin/sh\n" +
+				"case \"$1 $2\" in\n" +
+				"    'session stop') current=stop ;;\n" +
+				"    'container start') current=container ;;\n" +
+				"    *) exit 1 ;;\n" +
+				"esac\n" +
+				"if [ \"$MOCK_PHASE\" = \"$current\" ]; then\n" +
+				"    printf '%s\\n' \"$$\" > \"$MOCK_LOG/startup.pid\"\n" +
+				"    exec sleep 600\n" +
+				"fi\n" +
+				"exit 0\n"
+			if err := os.WriteFile(tools.Waydroid, []byte(waydroid), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			start := time.Now()
+			code, stderr := runLauncher(t, launcher.Config{Tools: tools})
+			elapsed := time.Since(start)
+			if code != 1 {
+				t.Fatalf("startup %s timeout exit %d, stderr %s", phase, code, stderr)
+			}
+			wantPhase := map[string]string{
+				"stop": "stopping the Waydroid session",
+				"container": "starting the Waydroid container",
+			}[phase]
+			if !strings.Contains(stderr, "Android startup did not complete within 2 seconds while "+wantPhase) {
+				t.Fatalf("shared startup deadline was not reported for %s: %s", phase, stderr)
+			}
+			if elapsed > 5*time.Second {
+				t.Fatalf("startup %s exceeded the shared deadline and cleanup allowance: %s", phase, elapsed)
+			}
+			assertStopped(t, waitPID(t, filepath.Join(logs, "startup.pid")))
+			if _, err := os.Stat(filepath.Join(logs, "cage.pid")); !os.IsNotExist(err) {
+				t.Fatal("compositor started even though Waydroid startup timed out")
+			}
+		})
+	}
+}
+
+func TestStartupDeadlineCoversABIAndAPKProbes(t *testing.T) {
+	for _, phase := range []string{"abi", "apk"} {
+		t.Run(phase, func(t *testing.T) {
+			tools, logs := testEnv(t)
+			t.Setenv("XTMAPPER_BOOT_WAIT_SECONDS", "2")
+			t.Setenv("MOCK_PHASE", phase)
+			adb := "#!/bin/sh\n" +
+				"case \"$2 $3\" in\n" +
+				"    'getprop sys.boot_completed') printf '1\\n' ;;\n" +
+				"    'getprop ro.product.cpu.abi')\n" +
+				"        if [ \"$MOCK_PHASE\" = abi ]; then printf '%s\\n' \"$$\" > \"$MOCK_LOG/probe.pid\"; exec sleep 600; fi\n" +
+				"        printf 'x86_64\\n' ;;\n" +
+				"    'pm path')\n" +
+				"        if [ \"$MOCK_PHASE\" = apk ]; then printf '%s\\n' \"$$\" > \"$MOCK_LOG/probe.pid\"; exec sleep 600; fi\n" +
+				"        printf 'package:/data/app/xtmapper/base.apk\\n' ;;\n" +
+				"    *) exit 1 ;;\n" +
+				"esac\n"
+			if err := os.WriteFile(tools.ADB, []byte(adb), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			start := time.Now()
+			code, stderr := runLauncher(t, launcher.Config{UseADB: true, Tools: tools})
+			elapsed := time.Since(start)
+			if code != 1 {
+				t.Fatalf("startup %s probe timeout exit %d, stderr %s", phase, code, stderr)
+			}
+			wantPhase := map[string]string{
+				"abi": "determining the Android CPU ABI",
+				"apk": "locating the XtMapper APK",
+			}[phase]
+			if !strings.Contains(stderr, "Android startup did not complete within 2 seconds while "+wantPhase) {
+				t.Fatalf("shared startup deadline was not reported for %s: %s", phase, stderr)
+			}
+			if elapsed > 5*time.Second {
+				t.Fatalf("startup %s probe exceeded the shared deadline and cleanup allowance: %s", phase, elapsed)
+			}
+			assertStopped(t, waitPID(t, filepath.Join(logs, "probe.pid")))
+			if _, err := os.Stat(filepath.Join(logs, "remote-command")); !os.IsNotExist(err) {
+				t.Fatal("remote service launched after a startup probe timed out")
+			}
+		})
+	}
+}

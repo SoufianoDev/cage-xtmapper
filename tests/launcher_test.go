@@ -6,9 +6,11 @@
 package launcher_test
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -368,6 +370,75 @@ func TestEventStreamBinaryPreserved(t *testing.T) {
 	}
 	if string(relayed[:len(payload)]) != string(payload) {
 		t.Fatal("event stream bytes were corrupted in transit")
+	}
+	if string(relayed[len(payload):]) != "ui stream\n" {
+		t.Fatal("final event record was altered")
+	}
+}
+
+
+// TestEventStreamSlowConsumerPreservesBytes applies backpressure throughout
+// the transfer, then verifies that every byte, including NULs and the final
+// event record, reaches the remote side unchanged.
+func TestEventStreamSlowConsumerPreservesBytes(t *testing.T) {
+	tools, logs := testEnv(t)
+	t.Setenv("XTMAPPER_BOOT_WAIT_SECONDS", "8")
+
+	payload := make([]byte, 4<<20)
+	for i := range payload {
+		payload[i] = byte(i*7 + i/13)
+	}
+	payloadFile := filepath.Join(t.TempDir(), "slow-payload")
+	if err := os.WriteFile(payloadFile, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MOCK_PAYLOAD", payloadFile)
+	t.Setenv("MOCK_EXPECTED_STREAM_BYTES", strconv.Itoa(len(payload)+len("ui stream\n")))
+
+	consumer := filepath.Join(t.TempDir(), "slow-consumer")
+	consumerBody := "#!/usr/bin/env bash\n" +
+		"set -euo pipefail\n" +
+		"remaining=$MOCK_EXPECTED_STREAM_BYTES\n" +
+		"output=$MOCK_LOG/remote-stdin\n" +
+		": > \"$output\"\n" +
+		"while (( remaining > 0 )); do\n" +
+		"  chunk=32768\n" +
+		"  if (( remaining < chunk )); then chunk=$remaining; fi\n" +
+		"  dd bs=\"$chunk\" count=1 iflag=fullblock status=none >> \"$output\"\n" +
+		"  remaining=$((remaining - chunk))\n" +
+		"  sleep 0.004\n" +
+		"done\n" +
+		"cat >> \"$output\"\n"
+	if err := os.WriteFile(consumer, []byte(consumerBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MOCK_SLOW_CONSUMER", consumer)
+	adbBody := strings.Replace(adbMock, "cat >\"$MOCK_LOG/remote-stdin\"", "\"$MOCK_SLOW_CONSUMER\"", 1)
+	if err := os.WriteFile(tools.ADB, []byte(adbBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	code, stderr := runLauncher(t, launcher.Config{UseADB: true, Tools: tools})
+	elapsed := time.Since(start)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	if elapsed < 350*time.Millisecond {
+		t.Fatalf("the slow consumer did not apply sustained backpressure: runtime was %s", elapsed)
+	}
+	if elapsed > 12*time.Second {
+		t.Fatalf("slow consumer transfer stalled for %s", elapsed)
+	}
+	relayed, err := os.ReadFile(filepath.Join(logs, "remote-stdin"))
+	if err != nil {
+		t.Fatalf("remote did not receive the stream: %v", err)
+	}
+	if len(relayed) != len(payload)+len("ui stream\n") {
+		t.Fatalf("relayed %d bytes, want %d", len(relayed), len(payload)+len("ui stream\n"))
+	}
+	if !bytes.Equal(relayed[:len(payload)], payload) {
+		t.Fatal("event stream bytes were corrupted while the consumer read slowly")
 	}
 	if string(relayed[len(payload):]) != "ui stream\n" {
 		t.Fatal("final event record was altered")
