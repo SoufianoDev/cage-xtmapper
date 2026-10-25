@@ -1,6 +1,9 @@
 package launcher
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestShutdownCausePreservesInitiatingKind(t *testing.T) {
 	t.Run("signal cannot replace an earlier pipeline exit", func(t *testing.T) {
@@ -30,4 +33,17 @@ func TestShutdownCausePreservesInitiatingKind(t *testing.T) {
 			t.Fatalf("shutdown result = (%d, %v), want (130, true)", code, ok)
 		}
 	})
+}
+
+func TestFailureResultRecordsCauseBeforeReturning(t *testing.T) {
+	cause := &shutdownCause{ready: make(chan struct{})}
+	ctx := context.WithValue(context.Background(), shutdownCauseKey{}, cause)
+
+	if got := failureResult(ctx, 127); got != 127 {
+		t.Fatalf("failureResult returned %d, want 127", got)
+	}
+	cause.mark(143, shutdownSignal)
+	if code, ok := cause.result(); !ok || code != 127 {
+		t.Fatalf("shutdown result after a late signal = (%d, %v), want (127, true)", code, ok)
+	}
 }
