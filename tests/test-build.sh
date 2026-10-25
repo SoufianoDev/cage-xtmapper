@@ -118,11 +118,13 @@ printf 'updated fixture source\n' > "$root/native-src/cage/cage.c"
 PATH="$root/bin:$PATH" "$root/build.sh" --dry-run >/dev/null
 grep -q '^meson setup ' "$MOCK_LOG"
 grep -q 'updated fixture source' "$root/build/source/cage-0.3.0/cage.c" || fail 'changed native source was not restaged'
-# An unchanged tree is not re-staged: the prepared marker keeps the staged tree current.
+# A tampered staging tree is reconstructed even when authoritative inputs are unchanged.
+printf 'tampered staged source\n' > "$root/build/source/cage-0.3.0/cage.c"
 touch "$root/build/source/cage-0.3.0/.sentinel"
 : > "$MOCK_LOG"
 PATH="$root/bin:$PATH" "$root/build.sh" --dry-run >/dev/null
-[[ -e "$root/build/source/cage-0.3.0/.sentinel" ]] || fail 'unchanged inputs triggered a restage'
+grep -q 'updated fixture source' "$root/build/source/cage-0.3.0/cage.c" || fail 'staged source tampering was not discarded'
+[[ ! -e "$root/build/source/cage-0.3.0/.sentinel" ]] || fail 'staging tree was not reconstructed'
 
 # A compile failure propagates and prevents installation.
 root="$tmp/failure"
