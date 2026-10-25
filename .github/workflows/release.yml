@@ -86,8 +86,10 @@ jobs:
           files: |
             dist/cage-xtmapper-*.tar
             dist/cage-xtmapper-*.tar.sha256
-            dist/cage-xtmapper-installer-linux-*
-            dist/cage-xtmapper-installer-linux-*.sha256
+            dist/cage-xtmapper-installer-linux-amd64
+            dist/cage-xtmapper-installer-linux-amd64.sha256
+            dist/cage-xtmapper-installer-linux-arm64
+            dist/cage-xtmapper-installer-linux-arm64.sha256
           draft: true
           fail_on_unmatched_files: true
           overwrite_files: false

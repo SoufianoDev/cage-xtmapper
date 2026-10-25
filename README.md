@@ -15,33 +15,29 @@ The `v0.2.0` and `v0.1.5` branches retain their own build and installation proce
 
 ## Install Or Update
 
-Use a release archive in the [managed release format](docs/installation.md#release-format), together with a matching source checkout. The source-only installer requires Bash, Go 1.24 or newer, and Linux. Installation is system-wide.
-
-From the source checkout, install your downloaded or locally built archive:
+Install the latest published stable release directly from GitHub. No Go toolchain, source checkout, or manual archive download is required:
 
 ```bash
-sudo ./install.sh install --archive /path/to/cage-xtmapper-VERSION.tar
-./install.sh status
+curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-to-c-golang-no-submodule/install.sh | sudo bash -s -- install
 ```
 
-The installer stores releases under `/opt/cage-xtmapper` and creates `/usr/local/bin/cage-xtmapper`. It checks the archive without running the downloaded application as root. Obtain archives from a trusted source; SHA-256 checksums verify integrity, not publisher authenticity.
-
-To replace an existing managed installation, close Cage XtMapper and run:
+Run the same command again to update an existing managed installation. Select a specific published release with `--version`:
 
 ```bash
-sudo ./install.sh update --archive /path/to/cage-xtmapper-NEW-VERSION.tar
+curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-to-c-golang-no-submodule/install.sh | sudo bash -s -- install --version vX.Y.Z
 ```
 
-An active application makes conflicting installation operations fail with a busy error. Successful updates remove the obsolete managed release. If an operation is interrupted, inspect and recover it:
+The bootstrap downloads a prebuilt helper and the matching release archive for Linux amd64 or arm64. It checks both SHA-256 files before passing the archive to the transactional installer. Missing shared libraries are installed automatically through APT on Debian/Ubuntu; on other distributions, the installer reports missing libraries rather than guessing package names. Waydroid and the XtMapper Android APK must already be set up.
+
+The installer stores releases under `/opt/cage-xtmapper` and creates `/usr/local/bin/cage-xtmapper`. Updates switch releases atomically and remove only files recorded as installer-owned. A recognized legacy `cage_xtmapper.sh` launcher is moved to a uniquely named backup after activation. Unknown files and legacy binaries are preserved and block installation until inspected. SHA-256 checksums detect corruption but do not authenticate the publisher.
+
+Developers can exercise install, update, repeated-install, status, and uninstall locally without publishing a GitHub Release:
 
 ```bash
-./install.sh status
-sudo ./install.sh recover
+bash tests/test-installer-local.sh
 ```
 
-Existing `cage_xtmapper` or `cage_xtmapper.sh` files cause a migration conflict because the old manual installation procedure did not record ownership. Inspect those files and move them explicitly after establishing what owns them, then retry. Old archives containing `usr/local/bin/` use the older branch's installer instructions.
-
-See [Installation And Recovery](docs/installation.md) for the commit point, ownership rules, error codes, test paths, and uninstall behavior.
+See [Installation And Recovery](docs/installation.md) for safety guarantees, migration behavior, recovery, and test options.
 
 ## Run
 

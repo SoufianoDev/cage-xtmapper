@@ -19,28 +19,27 @@ The installer supports system-wide installation. Its production paths are fixed:
 /usr/local/bin/cage-xtmapper -> /opt/cage-xtmapper/current/cage-xtmapper
 ```
 
-There is one application ELF. The installer does not create a runtime shell wrapper or a second Cage executable. `install.sh` and `tools/` remain in the source checkout.
+There is one installed application ELF; the installer helper is a separate, temporary executable and is not retained in the installation. The bootstrap `install.sh` downloads a prebuilt helper from a published release, so end users do not need Go or a source checkout.
 
-Use Linux with Go 1.24+, Bash, `/proc`, local-filesystem `flock`, directory `fsync`, `renameat2(RENAME_NOREPLACE)`, and `O_TMPFILE` support. `install.sh` compiles the source-only Go tool into a private temporary directory, then executes its open inode after removing the temporary files. Go is not required to run the installed application. Unsupported filesystem operations fail explicitly. Production installation roots, their parents, and the binary directory must be root-owned, non-symlink directories without group/other write permission. `/opt` and `/usr/local/bin` must already exist.
+Use supported 64-bit Linux (amd64 or arm64), Bash, curl, `sha256sum`, `/proc`, local-filesystem `flock`, directory `fsync`, `renameat2(RENAME_NOREPLACE)`, and `O_TMPFILE` support. The helper validates the release archive before staging it. It checks the declared ELF interpreter, glibc baseline, and shared libraries; missing library packages are installed through APT on Debian/Ubuntu. Other distributions receive an explicit missing-library error rather than guessed package names. Waydroid and the XtMapper Android APK remain prerequisites and are not installed by this script. Production installation roots, their parents, and the binary directory must be root-owned, non-symlink directories without group/other write permission. `/opt` and `/usr/local/bin` must already exist.
 
 ## Commands
 
-Run from the matching source checkout:
+Install or update directly from the latest published release without cloning the repository:
 
 ```bash
-sudo ./install.sh install --archive /absolute/path/release.tar
-sudo ./install.sh update --archive /absolute/path/new-release.tar
-./install.sh status
-sudo ./install.sh recover
-sudo ./install.sh uninstall
+curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-to-c-golang-no-submodule/install.sh | sudo bash -s -- install
+curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-to-c-golang-no-submodule/install.sh | sudo bash -s -- status
+curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-to-c-golang-no-submodule/install.sh | sudo bash -s -- recover
+curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-to-c-golang-no-submodule/install.sh | sudo bash -s -- uninstall
 ```
 
-Relative archive paths are relative to the calling directory. `--archive` is required for `install` and `update`, and rejected for the other commands. There is no persistent rollback command.
+A mutating command must run as root, usually via `sudo`; `status` can be run without root. Running `install` on an existing managed installation automatically updates it. If the release ID and archive contents already match, it succeeds without staging or changing the active state. Use `--version vX.Y.Z` to pin a published tag, `--repo OWNER/REPO` for a release hosted in another repository, or `--archive FILE` to use a local archive. A tag must have a published release with matching assets; draft releases are not available through the public latest-release endpoint. There is no persistent rollback command.
 
 | Command | Required State | Result |
 |---|---|---|
-| `install` | No active managed release; no conflicting files | Stage and activate a release. A prior uninstalled ownership record can be reused. |
-| `update` | Existing, intact managed installation | Activate a new release and remove the obsolete managed release. |
+| `install` | No active managed release, or an intact managed installation | Install the release, or converge to update if one is already active. Identical content is a no-op. |
+| `update` | Existing, intact managed installation | Activate a new release and remove the obsolete managed release; identical content is a no-op. |
 | `status` | Any readable state | Report active release and any incomplete transaction without modifying installation state. Unknown/corrupt installations produce an error. |
 | `recover` | Managed state or a complete recorded bootstrap | Inspect the real `current` symlink and journal; roll back precommit staging or finish postcommit cleanup. Repeating successful recovery is harmless. |
 | `uninstall` | Existing, intact managed installation | Remove the recorded launcher link and managed release data. |
@@ -63,7 +62,7 @@ Errors go to stderr. Status uses JSON on stdout; mutating commands report the ac
 
 An arbitrary matching filename, symlink target, or checksum is insufficient to adopt a file. Existing unknown roots and launcher paths cause refusal. Root components, symlink components, hard links, unexpected file types, changed permissions, file capabilities, and changed owned content fail validation.
 
-The old documented procedure manually copied `/usr/local/bin/cage_xtmapper` and `/usr/local/bin/cage_xtmapper.sh`. It left no reliable installation receipt. Therefore either legacy path, including an unrelated symlink at that name, blocks install/update before activation. Inspect and move a conflicting file explicitly after establishing its ownership. The installer does not delete or adopt it.
+The old documented procedure manually copied `/usr/local/bin/cage_xtmapper` and `/usr/local/bin/cage_xtmapper.sh` without a reliable installation receipt. A regular shell file is recognized only when its shebang and XtMapper-specific content markers match the old launcher. After the new release is active, the script is atomically moved to `cage_xtmapper.sh.legacy-backup-<id>` in the same directory; its contents are preserved and it is never executed or deleted by migration. A changed or unknown script, any symlink at the legacy path, or an existing `cage_xtmapper` binary still blocks installation until inspected. The installer does not guess ownership or remove unknown files.
 
 Uninstall verifies the recorded launcher symlink's inode and target before removing it. It removes only the recorded release files, then directories that are still owned and empty. Unknown or modified content inside a managed release causes safe refusal. Unrelated root entries, other links and their targets, Waydroid data/APKs, shared libraries/tools, Steam entries, and desktop/user configuration are preserved.
 
@@ -128,3 +127,16 @@ mkdir -m755 "$prefix/usr/local" "$prefix/usr/local/bin"
 ```
 
 This manages only `$prefix/opt/cage-xtmapper` and `$prefix/usr/local/bin/cage-xtmapper`. The Go integration suite creates and cleans its own private prefixes. Its named pause hooks are enabled only with a test prefix and write a checkpoint file there, so SIGKILL can exercise staging, activation, and partial cleanup without modifying the real system installation.
+
+
+## Developer Tests Without a GitHub Release
+
+Run the complete local installer lifecycle test:
+
+```bash
+bash tests/test-installer-local.sh
+```
+
+The script builds the application and helper locally, packages two temporary release archives, and exercises install, automatic update through the normal `install` command, repeated-install no-op behavior, status, and uninstall under an isolated private test prefix. It does not publish a GitHub Release or modify the real `/opt/cage-xtmapper` or `/usr/local/bin/cage-xtmapper` paths. CI can use `bash tests/test-installer-local.sh --skip-build` after the normal native build has completed.
+
+For testing the bootstrap shell script, set `XTMAPPER_INSTALLER_BIN` to a local helper path and pass `--archive FILE --test-prefix DIR`. This bypass is intended only for local development. Normal installations download and checksum-verify the helper and archive from a published release.
