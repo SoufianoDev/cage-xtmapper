@@ -16,22 +16,44 @@ import (
 
 type shutdownCauseKey struct{}
 
+type shutdownCauseKind uint8
+
+const (
+	shutdownFailure shutdownCauseKind = iota
+	shutdownPipeline
+	shutdownSignal
+)
+
 type shutdownCause struct {
-	once  sync.Once
+	mu    sync.Mutex
 	ready chan struct{}
+	set   bool
+	kind  shutdownCauseKind
 	code  int
 }
 
-func (c *shutdownCause) mark(code int) {
-	c.once.Do(func() {
+func (c *shutdownCause) mark(code int, kind shutdownCauseKind) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.set {
+		c.set = true
+		c.kind = kind
 		c.code = code
 		close(c.ready)
-	})
+		return
+	}
+	// A second independently observed pipeline exit can refine pipefail's
+	// result, but no signal or cleanup result may replace the pipeline cause.
+	if c.kind == shutdownPipeline && kind == shutdownPipeline {
+		c.code = code
+	}
 }
 
 func (c *shutdownCause) result() (int, bool) {
 	select {
 	case <-c.ready:
+		c.mu.Lock()
+		defer c.mu.Unlock()
 		return c.code, true
 	default:
 		return 0, false
@@ -40,7 +62,13 @@ func (c *shutdownCause) result() (int, bool) {
 
 func markShutdownCause(ctx context.Context, code int) {
 	if cause, ok := ctx.Value(shutdownCauseKey{}).(*shutdownCause); ok {
-		cause.mark(code)
+		cause.mark(code, shutdownFailure)
+	}
+}
+
+func markPipelineExitCause(ctx context.Context, code int) {
+	if cause, ok := ctx.Value(shutdownCauseKey{}).(*shutdownCause); ok {
+		cause.mark(code, shutdownPipeline)
 	}
 }
 
@@ -58,11 +86,7 @@ func Run(cfg Config) int {
 	go func() { done <- run(ctx, cfg) }()
 	select {
 	case s := <-signals:
-		if code, ok := cause.result(); ok {
-			cancel()
-			<-done
-			return code
-		}
+		cause.mark(signalStatus(s), shutdownSignal)
 		cancel()
 		<-done
 		if initiatingCode, ok := cause.result(); ok {
@@ -214,26 +238,32 @@ func supervise(ctx context.Context, cfg Config, t transport) (result int) {
 	// cleanup signal as the pipeline result.
 	select {
 	case <-comp.dead:
+		markPipelineExitCause(parentCtx, comp.code)
 		if waitForPeerExit(ctx, remote) {
-			return pipelineExitStatus(comp, remote)
+			code := pipelineExitStatus(comp, remote)
+			markPipelineExitCause(parentCtx, code)
+			return code
 		}
 		if ctx.Err() != nil {
 			return 1
 		}
 		code := comp.code
-		markShutdownCause(parentCtx, code)
+		markPipelineExitCause(parentCtx, code)
 		cancel()
 		<-remote.dead
 		return code
 	case <-remote.dead:
+		markPipelineExitCause(parentCtx, remote.code)
 		if waitForPeerExit(ctx, comp) {
-			return pipelineExitStatus(comp, remote)
+			code := pipelineExitStatus(comp, remote)
+			markPipelineExitCause(parentCtx, code)
+			return code
 		}
 		if ctx.Err() != nil {
 			return 1
 		}
 		code := remote.code
-		markShutdownCause(parentCtx, code)
+		markPipelineExitCause(parentCtx, code)
 		cancel()
 		<-comp.dead
 		return code
