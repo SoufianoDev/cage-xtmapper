@@ -24,10 +24,10 @@ func errChildExit(msg string, code int) error {
 }
 
 type child struct {
-	cmd         *exec.Cmd
-	dead        chan struct{}
-	code        int // Published before dead closes; every observer can read it.
-	cleanupOnce sync.Once
+	cmd          *exec.Cmd
+	dead         chan struct{}
+	code         int // Published before dead closes; every observer can read it.
+	cleanupOnce  sync.Once
 	stopCleanup  func() bool
 	processGroup bool
 }
