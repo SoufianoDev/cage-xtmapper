@@ -264,6 +264,11 @@ func supervise(ctx context.Context, cfg Config, t transport, startupDeadline tim
 		markPipelineExitCause(parentCtx, comp.code)
 		return comp.code
 	}
+	if !time.Now().Before(startupDeadline) {
+		code := failureResult(parentCtx, 1)
+		reportError(startupTimeoutError(startupSeconds, "launching remote XtMapper"))
+		return code
+	}
 
 	// Both children use the kernel pipe directly; Go never reads or buffers events.
 	remoteCmd.Stdin = evtRead

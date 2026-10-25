@@ -22,7 +22,7 @@ func TestRemoteCommandRoundTripsArgumentsThroughShell(t *testing.T) {
 			bootFile := filepath.Join(dir, "bootclasspath")
 			injected := filepath.Join(dir, "should-not-exist")
 			fixtureScript := "#!/bin/sh\n" +
-				"printf '%s\\0' \"$@\" > \"$REMOTE_ARGV\"\n" +
+				"printf '%s\\000' \"$@\" > \"$REMOTE_ARGV\"\n" +
 				"printf '%s' \"$BOOTCLASSPATH\" > \"$REMOTE_BOOTCLASSPATH\"\n"
 			if err := os.WriteFile(fixture, []byte(fixtureScript), 0o755); err != nil {
 				t.Fatal(err)
