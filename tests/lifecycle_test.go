@@ -172,7 +172,6 @@ func TestFailedBootProbeOutputIsDiscarded(t *testing.T) {
 	}
 }
 
-
 // TestRuntimePeerExitCancelsOtherSide prevents either pipeline child from
 // keeping the launcher alive after its peer has failed.
 func TestRuntimePeerExitCancelsOtherSide(t *testing.T) {
