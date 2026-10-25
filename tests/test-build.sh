@@ -4,6 +4,8 @@ set -Eeuo pipefail
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
+go -C "$repo" build -o "$tmp/release-tool" ./tools/release
+export MOCK_RELEASE_TOOL="$tmp/release-tool"
 
 make_source_repo() {
     local path="$1" file="$2"
@@ -20,7 +22,6 @@ make_fixture() {
     local root="$1"
     mkdir -p "$root"/{bin,meson_wrapfiles,wlroots_deps}
     cp "$repo/build.sh" "$root/"
-    cp "$repo/cage_xtmapper.sh" "$root/"
     touch "$root/meson_wrapfiles/local.wrap" "$root/wlroots_deps/local.tar.xz"
     make_source_repo "$root/forks/cage" cage.c
     make_source_repo "$root/forks/wlroots-xtmapper" wlroots.c
@@ -33,11 +34,36 @@ make_fixture() {
 #!/usr/bin/env bash
 echo "meson $*" >> "$MOCK_LOG"
 if [[ "${1-}" == compile && "${MESON_FAIL-}" == compile ]]; then exit 31; fi
-if [[ "${1-}" == install ]]; then
-    mkdir -p "$MOCK_ROOT/build/installed/usr/local/bin" "$MOCK_ROOT/build/installed/usr/local/lib"
+MOCK
+    cat > "$root/bin/ninja" <<'MOCK'
+#!/usr/bin/env bash
+echo "ninja $*" >> "$MOCK_LOG"
+if [[ "${1-}" == -C ]]; then
+    shift 2
+    if [[ "${1-}" == -t && "${2-}" == commands && "$3" == cage_xtmapper ]]; then
+        printf 'cc -o cage_xtmapper cage_xtmapper.p/cage.c.o cage_xtmapper.p/seat.c.o -Wl,--as-needed -Wl,--start-group subprojects/wlroots/libwlroots-0.20.a -lffi -lm -Wl,--end-group\n'
+    fi
 fi
 MOCK
-    chmod +x "$root/bin/meson"
+    cat > "$root/bin/go" <<'MOCK'
+#!/usr/bin/env bash
+echo "go $*" >> "$MOCK_LOG"
+if [[ "${1-}" == run && "${2-}" == ./tools/release ]]; then
+    shift 2
+    if [[ "${1-}" == record-build ]]; then
+        echo "release $*" >> "$MOCK_LOG"
+    else
+        exec "$MOCK_RELEASE_TOOL" "$@"
+    fi
+fi
+if [[ "${1-}" == build ]]; then
+    [[ "${GO_FAIL-}" != build ]] || exit 32
+    mkdir -p "$MOCK_ROOT/build/go"
+    printf '#!/bin/sh\nexec true\n' > "$MOCK_ROOT/build/go/cage-xtmapper"
+    chmod +x "$MOCK_ROOT/build/go/cage-xtmapper"
+fi
+MOCK
+    chmod +x "$root/bin/meson" "$root/bin/ninja" "$root/bin/go"
 }
 
 fail() {
@@ -65,8 +91,10 @@ fi
 grep -q '^meson setup ' "$MOCK_LOG"
 grep -q '^meson setup .* --buildtype=release ' "$MOCK_LOG" || fail 'fresh Meson setup did not request release buildtype'
 grep -q -- '-Dwlroots:buildtype=release' "$MOCK_LOG" || fail 'wlroots did not receive release buildtype'
+grep -q -- '-Dforce_fallback_for=wayland-server,wayland-client,xkbcommon,pixman-1' "$MOCK_LOG" || fail 'bundled native dependencies were not selected'
 if grep -q '^meson compile ' "$MOCK_LOG"; then fail 'dry-run invoked compile'; fi
 if grep -q '^meson install ' "$MOCK_LOG"; then fail 'dry-run invoked install'; fi
+if grep -q '^go build ' "$MOCK_LOG"; then fail 'dry-run invoked Go'; fi
 [[ -f "$root/build/source/cage-0.3.0/cage.c" ]] || fail 'Cage source was not assembled'
 [[ -f "$root/build/source/cage-0.3.0/subprojects/wlroots/wlroots.c" ]] || fail 'wlroots source was not placed under Cage subprojects'
 [[ -d "$root/build/source/cage-0.3.0/subprojects/wlroots/subprojects/packagefiles" ]] || fail 'dependency archive location is missing'
@@ -123,15 +151,38 @@ fi
 grep -q '^meson compile ' "$MOCK_LOG"
 if grep -q '^meson install ' "$MOCK_LOG"; then fail 'compile failure did not stop installation'; fi
 
-# A successful build installs the launcher script alongside the Meson binary.
-root="$tmp/success"
+# A successful build stages only the application, including on repeat builds.
+root="$tmp/success with spaces"
 make_fixture "$root"
 export MOCK_ROOT="$root"
+mkdir -p "$root/build/installed/usr/local/"{bin,lib}
+touch "$root/build/installed/usr/local/bin/"{cage_xtmapper,cage_xtmapper.sh,wayland-scanner}
 : > "$MOCK_LOG"
 PATH="$root/bin:$PATH" "$root/build.sh" >/dev/null
 grep -q '^meson compile ' "$MOCK_LOG"
-grep -q '^meson install ' "$MOCK_LOG"
-[[ -x "$root/build/installed/usr/local/bin/cage_xtmapper.sh" ]] || fail 'launcher was not copied into the install tree'
+if grep -q '^meson install ' "$MOCK_LOG"; then fail 'Meson development tools were installed'; fi
+grep -q '^ninja -C .* -t commands cage_xtmapper' "$MOCK_LOG" || fail 'ninja link command list was not queried'
+[[ -x "$root/build/installed/usr/local/bin/cage-xtmapper" ]] || fail 'single ELF was not staged into the install tree'
+[[ $(find "$root/build/installed" -type f | wc -l) == 1 ]] || fail 'unexpected files remained in the install tree'
+if [[ -e "$root/build/installed/usr/local/lib" ]]; then fail 'installed library dir should have been removed'; fi
+[[ -x "$root/build/go/cage-xtmapper" ]] || fail 'Go ELF artifact is missing from the build tree'
+grep -q '^go build -a -o .* ./cmd/cage-xtmapper$' "$MOCK_LOG" || fail 'go build did not rebuild the native link'
+grep -q "$root/build/meson/libcage_xtmapper.a" "$root/build/native/pkgconfig/cage-xtmapper-native.pc" || fail 'pc contract lost the Cage library'
+grep -q -- '-Wl,--start-group' "$root/build/native/pkgconfig/cage-xtmapper-native.pc" || fail 'pc contract lost the archive group'
+grep -q -- '-Wl,--end-group' "$root/build/native/pkgconfig/cage-xtmapper-native.pc" || fail 'pc contract lost the archive group end'
+grep -q "$root/build/meson/subprojects/wlroots/libwlroots-0.20.a" "$root/build/native/pkgconfig/cage-xtmapper-native.pc" || fail 'pc contract did not absolutize subproject archives'
+grep -q -- '-I'"$root/build/source/cage-0.3.0" "$root/build/native/pkgconfig/cage-xtmapper-native.pc" || fail 'pc contract lost the Cage source include path'
+grep -q 'build_type=release' "$root/build/go/provenance.txt" || fail 'provenance did not record the build type'
+grep -q 'fingerprint=' "$root/build/go/provenance.txt" || fail 'provenance did not record the input fingerprint'
+grep -q '^release record-build$' "$MOCK_LOG" || fail 'release metadata was not recorded'
+
+# Failed Go compilation leaves the last successful staged application intact.
+printf 'previous build\n' > "$root/build/installed/usr/local/bin/cage-xtmapper"
+if PATH="$root/bin:$PATH" GO_FAIL=build "$root/build.sh" >"$tmp/out" 2>&1; then
+    fail 'Go build failure unexpectedly succeeded'
+fi
+grep -q 'building the cage-xtmapper ELF failed' "$tmp/out"
+grep -q '^previous build$' "$root/build/installed/usr/local/bin/cage-xtmapper" || fail 'failed Go build replaced the staged application'
 
 # An uninitialized submodule checkout is reported before invoking Meson.
 root="$tmp/uninitialized"

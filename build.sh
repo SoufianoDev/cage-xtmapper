@@ -82,6 +82,8 @@ require_pinned_commit() {
 
 require_pinned_commit Cage forks/cage "$cage_checkout"
 require_pinned_commit wlroots forks/wlroots-xtmapper "$wlroots_checkout"
+command -v clang >/dev/null 2>&1 || fail "Clang (clang) is required to build the native code"
+export CC=clang
 
 shopt -s nullglob
 wrapfiles=("$script_dir"/meson_wrapfiles/*)
@@ -93,6 +95,7 @@ input_fingerprint() {
     {
         git -C "$cage_checkout" rev-parse HEAD
         git -C "$wlroots_checkout" rev-parse HEAD
+        clang --version
         sha256sum -- "${wrapfiles[@]}" "${dependencies[@]}"
     } | sha256sum | cut -d ' ' -f 1
 }
@@ -132,6 +135,9 @@ meson_setup_args=(
     -Ddefault_library=static
     -Dprefix=/usr/local
     "-Dwlroots:buildtype=$build_type"
+    "-Dforce_fallback_for=wayland-server,wayland-client,xkbcommon,pixman-1"
+    -Dlibdrm:werror=false
+    -Dlibxkbcommon:werror=false
 )
 if [[ -f "$meson_build_dir/meson-private/coredata.dat" ]]; then
     meson setup --reconfigure "$meson_build_dir" "$source_dir" "${meson_setup_args[@]}"
@@ -144,14 +150,37 @@ if [[ "$dry_run" == true ]]; then
     exit 0
 fi
 
+if ! command -v ninja >/dev/null; then
+    fail "ninja is required to derive the Go link contract"
+fi
+if ! command -v go >/dev/null 2>&1; then
+    fail "the Go toolchain (go) is required to build cage-xtmapper"
+fi
+
 meson compile -C "$meson_build_dir"
-meson install -C "$meson_build_dir" --destdir "$build_root/installed"
+
+# Reuse the standalone target's dependency graph, replacing its objects with the Cage library.
+mkdir -p -- "$build_root/go" "$build_root/native/pkgconfig"
+if ! link_line="$(ninja -C "$meson_build_dir" -t commands cage_xtmapper | tail -n 1)"; then
+    fail "could not query the cage_xtmapper link command"
+fi
+[[ -n "$link_line" ]] || fail "Meson did not produce a cage_xtmapper link command"
+pc_file="$build_root/native/pkgconfig/cage-xtmapper-native.pc"
+(cd -- "$script_dir" && go run ./tools/release link-contract "$meson_build_dir" "$source_dir" "$link_line") > "$pc_file" || fail "generating the native link contract failed"
+
+# Go's cache does not track changes to the external native archives.
+if ! (cd "$script_dir" && CGO_ENABLED=1 PKG_CONFIG_PATH="$build_root/native/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" go build -a -o "$build_root/go/cage-xtmapper" ./cmd/cage-xtmapper); then
+    fail "building the cage-xtmapper ELF failed"
+fi
+printf 'build_type=%s\ncage=%s\nwlroots=%s\nfingerprint=%s\n%s\n' \
+    "$build_type" \
+    "$(git -C "$cage_checkout" rev-parse HEAD)" \
+    "$(git -C "$wlroots_checkout" rev-parse HEAD)" \
+    "$current_fingerprint" \
+    "$(go version)" > "$build_root/go/provenance.txt"
+(cd -- "$script_dir" && go run ./tools/release record-build) || fail "recording release build metadata failed"
+# Stage only the application; Meson's install tree also contains development tools.
+rm -rf -- "$build_root/installed"
 installed_bin="$build_root/installed/usr/local/bin"
-[[ -d "$installed_bin" ]] || fail "Meson install did not create $installed_bin"
-cp -- "$script_dir/cage_xtmapper.sh" "$installed_bin/"
-chmod a+x "$installed_bin/cage_xtmapper.sh"
-for path in "$build_root/installed"/usr/local/lib* "$build_root/installed/usr/local/include"; do
-    if [[ -e "$path" || -L "$path" ]]; then
-        rm -rf -- "$path"
-    fi
-done
+mkdir -p -- "$installed_bin"
+install -m755 -- "$build_root/go/cage-xtmapper" "$installed_bin/cage-xtmapper"

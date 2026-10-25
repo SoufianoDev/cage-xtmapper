@@ -43,6 +43,8 @@ write_os ubuntu
 : > "$MOCK_LOG"
 OS_RELEASE_FILE="$tmp/os-release" "$repo/install_deps.sh" --dry-run > "$tmp/out"
 grep -q 'Detected ubuntu. Packages:.*build-essential' "$tmp/out" || fail 'Ubuntu packages were not selected'
+grep -q ' golang-go bison ' "$tmp/out" || fail 'Go or bundled xkbcommon build tools were omitted'
+grep -q ' libffi-dev libexpat1-dev libxml2-dev ' "$tmp/out" || fail 'bundled Wayland build dependencies were omitted'
 [[ ! -s "$MOCK_LOG" ]] || fail 'dry-run invoked commands'
 write_os fedora
 OS_RELEASE_FILE="$tmp/os-release" "$repo/install_deps.sh" --dry-run > "$tmp/out"

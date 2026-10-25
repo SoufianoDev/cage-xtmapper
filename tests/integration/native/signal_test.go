@@ -1,14 +1,12 @@
-// Package native_test exercises the embedded compositor dispatch mode
-// of the single-ELF application: same-ELF native execution, primary
-// client status propagation, client-stdstress separation, and signal
-// ownership through the control channel.
 package native_test
 
 import (
 	"bytes"
+	"debug/elf"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -37,9 +35,6 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// headlessEnv returns the environment every test needs: a runtime dir
-// for the compositor socket and the pure-software, display-less
-// backends.
 func headlessEnv(t *testing.T) []string {
 	t.Helper()
 	runtimeDir := filepath.Join(t.TempDir(), "run")
@@ -51,6 +46,42 @@ func headlessEnv(t *testing.T) []string {
 		"WLR_BACKENDS=headless",
 		"WLR_RENDERER=pixman",
 	)
+}
+
+func TestSingleELFNativeLink(t *testing.T) {
+	f, err := elf.Open(binPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	libraries, err := f.ImportedLibraries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, library := range libraries {
+		if strings.Contains(library, "cage") || strings.Contains(library, "wlroots") {
+			t.Errorf("project code depends on an external shared library: %s", library)
+		}
+	}
+	for _, tag := range []elf.DynTag{elf.DT_RPATH, elf.DT_RUNPATH} {
+		paths, err := f.DynString(tag)
+		if err != nil || len(paths) != 0 {
+			t.Errorf("unexpected %s: %v (%v)", tag, paths, err)
+		}
+	}
+	symbols, err := f.Symbols()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"cage_xtmapper_main": true, "wlr_backend_autocreate": true, "wl_display_create": true}
+	for _, symbol := range symbols {
+		if symbol.Section != elf.SHN_UNDEF {
+			delete(want, symbol.Name)
+		}
+	}
+	for symbol := range want {
+		t.Errorf("native symbol was not linked into the ELF: %s", symbol)
+	}
 }
 
 func TestInternalClientStatusPropagation(t *testing.T) {
@@ -123,7 +154,6 @@ func TestInternalSignalShutdown(t *testing.T) {
 }
 
 func TestInternalEarlySignalShutdown(t *testing.T) {
-	// A request arriving before the event loop starts must not be lost.
 	cmd := exec.Command(binPath, "--internal-cage", "--", "sleep", "1000")
 	cmd.Env = headlessEnv(t)
 	if err := cmd.Start(); err != nil {
@@ -145,5 +175,77 @@ func TestInternalEarlySignalShutdown(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		_ = cmd.Process.Kill()
 		t.Fatal("early termination request was lost")
+	}
+}
+
+func TestPrintOutputInfoHeadless(t *testing.T) {
+	hostRun := t.TempDir()
+	hostRuntime := filepath.Join(hostRun, "run")
+	if err := os.Mkdir(hostRuntime, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	host := exec.Command(binPath, "--internal-cage", "--", "sleep", "2000")
+	host.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	host.WaitDelay = 2 * time.Second
+	host.Env = append(os.Environ(),
+		"XDG_RUNTIME_DIR="+hostRuntime,
+		"WLR_BACKENDS=headless",
+		"WLR_RENDERER=pixman",
+		"XTMAPPER_WIDTH=800",
+		"XTMAPPER_HEIGHT=600",
+	)
+	host.Stderr = os.Stderr
+	if err := host.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = syscall.Kill(-host.Process.Pid, syscall.SIGKILL)
+		_, _ = host.Process.Wait()
+	}()
+
+	var socket string
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		matches, err := filepath.Glob(filepath.Join(hostRuntime, "wayland-*"))
+		if err == nil && len(matches) > 0 {
+			socket = matches[0]
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if socket == "" {
+		t.Fatal("host compositor did not expose a wayland socket")
+	}
+
+	runtimeDir := t.TempDir()
+	nestedRuntime := filepath.Join(runtimeDir, "run")
+	if err := os.Mkdir(nestedRuntime, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	nested := exec.Command(binPath, "--print-output-info")
+	nested.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	nested.WaitDelay = 2 * time.Second
+	nested.Env = append(os.Environ(),
+		"XDG_RUNTIME_DIR="+nestedRuntime,
+		"WAYLAND_DISPLAY="+socket,
+		"WLR_BACKENDS=wayland",
+		"WLR_RENDERER=pixman",
+	)
+	var out, errb bytes.Buffer
+	nested.Stdout = &out
+	nested.Stderr = &errb
+	done := make(chan error, 1)
+	go func() { done <- nested.Run() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("unexpected failure: %v (stderr %q)", err, errb.String())
+		}
+	case <-time.After(10 * time.Second):
+		_ = syscall.Kill(-nested.Process.Pid, syscall.SIGKILL)
+		t.Fatalf("print-output-info hung (stderr %q)", errb.String())
+	}
+	if !bytes.Contains(errb.Bytes(), []byte("Output mode: 800x600")) {
+		t.Fatalf("output info missing on stderr: %q", errb.String())
 	}
 }

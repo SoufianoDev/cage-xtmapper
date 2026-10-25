@@ -39,7 +39,6 @@ shell_quote() {
     printf "'%s'" "$value"
 }
 
-# Steam gaming mode
 if [[ -n ${GAMESCOPE_WAYLAND_DISPLAY:-} ]]; then
     unset DISPLAY
     export WAYLAND_DISPLAY="$GAMESCOPE_WAYLAND_DISPLAY"

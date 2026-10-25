@@ -22,10 +22,16 @@ jobs:
       - name: Build
         run: ./build.sh
 
+      - name: Verify runtime and installation
+        run: |
+          export CC=clang PKG_CONFIG_PATH="$PWD/build/native/pkgconfig"
+          go vet ./...
+          go test -race -count=1 ./...
+
       - name: Package versioned archive
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: tar -C build/installed -pcf "cage-xtmapper-${RELEASE_TAG}.tar" usr
+        run: go run ./tools/release package --version "$RELEASE_TAG" --output "cage-xtmapper-${RELEASE_TAG}.tar"
 
       - name: Attach archive to the matching release
         uses: softprops/action-gh-release@v2

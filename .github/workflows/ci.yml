@@ -5,7 +5,12 @@ on:
     paths:
       - 'build.sh'
       - 'install_deps.sh'
+      - 'install.sh'
+      - 'tools/**'
       - 'cage_xtmapper.sh'
+      - 'go.mod'
+      - 'cmd/**'
+      - 'internal/**'
       - 'forks/**'
       - '.gitmodules'
       - 'wlroots_deps/**'
@@ -17,7 +22,12 @@ on:
     paths:
       - 'build.sh'
       - 'install_deps.sh'
+      - 'install.sh'
+      - 'tools/**'
       - 'cage_xtmapper.sh'
+      - 'go.mod'
+      - 'cmd/**'
+      - 'internal/**'
       - 'forks/**'
       - '.gitmodules'
       - 'wlroots_deps/**'
@@ -48,14 +58,21 @@ jobs:
 
       - name: Check shell syntax and style
         run: |
-          bash -n build.sh install_deps.sh cage_xtmapper.sh tests/*.sh
-          shellcheck build.sh install_deps.sh cage_xtmapper.sh tests/*.sh
+          for script in build.sh install.sh install_deps.sh cage_xtmapper.sh tests/*.sh; do bash -n "$script"; done
+          shellcheck build.sh install.sh install_deps.sh cage_xtmapper.sh tests/*.sh
 
-      - name: Run mocked installer, build, and launcher checks
+      - name: Run shell fixture checks
         run: |
           bash tests/test-install-deps.sh
           bash tests/test-build.sh
           bash tests/test-launcher.sh
 
-      - name: Compile Cage and wlroots
+      - name: Build the single ELF
         run: ./build.sh
+
+      - name: Check Go formatting, runtime and installation
+        run: |
+          test -z "$(gofmt -l cmd internal tools tests)"
+          export CC=clang PKG_CONFIG_PATH="$PWD/build/native/pkgconfig"
+          go vet ./...
+          go test -race -count=1 ./...
