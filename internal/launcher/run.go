@@ -128,13 +128,6 @@ func run(ctx context.Context, cfg Config) int {
 		reportError(errors.New("XTMAPPER_BOOT_WAIT_SECONDS must be a positive integer"))
 		return code
 	}
-	// This deadline is shared by stopping the session, starting the container,
-	// boot polling, ABI discovery, and APK lookup. It is not reused once the
-	// remote XtMapper process has started.
-	startupDeadline := time.Now().Add(time.Duration(bootWait) * time.Second)
-	startupCtx, cancelStartup := context.WithDeadline(ctx, startupDeadline)
-	defer cancelStartup()
-
 	var t transport
 	if cfg.UseADB {
 		p, ok := findTool(cfg.Tools.ADB, "adb")
@@ -163,25 +156,29 @@ func run(ctx context.Context, cfg Config) int {
 		t = waydroidTransport(&cfg)
 	}
 
-	if !cfg.UseADB {
-		if err := t.stopSession(startupCtx); err != nil {
-			if errors.Is(startupCtx.Err(), context.DeadlineExceeded) {
-				err = startupTimeoutError(bootWait, "stopping the Waydroid session")
-			}
-			code := failureResult(ctx, 1)
-			reportError(err)
-			return code
-		}
-		if err := t.startContainer(startupCtx); err != nil {
-			if errors.Is(startupCtx.Err(), context.DeadlineExceeded) {
-				err = startupTimeoutError(bootWait, "starting the Waydroid container")
-			}
-			code := failureResult(ctx, 1)
-			reportError(err)
-			return code
-		}
+	startupDeadline, err := prepareStartup(ctx, t, bootWait)
+	if err != nil {
+		code := failureResult(ctx, 1)
+		reportError(err)
+		return code
 	}
 	return supervise(ctx, cfg, t, startupDeadline, bootWait)
+}
+
+// prepareStartup gives each container operation its own transport-level timeout.
+// The Android boot wait starts only after the Waydroid container is running.
+func prepareStartup(ctx context.Context, t transport, bootWait int64) (time.Time, error) {
+	if t.stopSession != nil {
+		if err := t.stopSession(ctx); err != nil {
+			return time.Time{}, err
+		}
+	}
+	if t.startContainer != nil {
+		if err := t.startContainer(ctx); err != nil {
+			return time.Time{}, err
+		}
+	}
+	return time.Now().Add(time.Duration(bootWait) * time.Second), nil
 }
 
 func reportError(err error) {
