@@ -7,29 +7,17 @@ trap 'rm -rf -- "$tmp"' EXIT
 go -C "$repo" build -o "$tmp/release-tool" ./tools/release
 export MOCK_RELEASE_TOOL="$tmp/release-tool"
 
-make_source_repo() {
-    local path="$1" file="$2"
-    mkdir -p -- "$path"
-    git -C "$path" init -q
-    git -C "$path" config user.name 'Build test'
-    git -C "$path" config user.email 'build-test@example.invalid'
-    printf 'fixture source\n' > "$path/$file"
-    git -C "$path" add -- "$file"
-    git -C "$path" commit -q -m 'fixture source'
-}
-
 make_fixture() {
     local root="$1"
-    mkdir -p "$root"/{bin,meson_wrapfiles,wlroots_deps}
+    mkdir -p "$root"/{bin,meson_wrapfiles,wlroots_deps,native-src/cage,native-src/wlroots-xtmapper}
     cp "$repo/build.sh" "$root/"
     touch "$root/meson_wrapfiles/local.wrap" "$root/wlroots_deps/local.tar.xz"
-    make_source_repo "$root/forks/cage" cage.c
-    make_source_repo "$root/forks/wlroots-xtmapper" wlroots.c
-    git -C "$root" init -q
-    git -C "$root" config user.name 'Build test'
-    git -C "$root" config user.email 'build-test@example.invalid'
-    git -C "$root" update-index --add --cacheinfo "160000,$(git -C "$root/forks/cage" rev-parse HEAD),forks/cage"
-    git -C "$root" update-index --add --cacheinfo "160000,$(git -C "$root/forks/wlroots-xtmapper" rev-parse HEAD),forks/wlroots-xtmapper"
+    printf 'fixture source\n' > "$root/native-src/cage/cage.c"
+    printf 'fixture source\n' > "$root/native-src/wlroots-xtmapper/wlroots.c"
+    cat > "$root/native-src/ORIGINS" <<'ORIGINS'
+cage 1111111111111111111111111111111111111111 https://example.invalid/cage.git 2222222222222222222222222222222222222222
+wlroots 3333333333333333333333333333333333333333 https://example.invalid/wlroots.git 4444444444444444444444444444444444444444
+ORIGINS
     cat > "$root/bin/meson" <<'MOCK'
 #!/usr/bin/env bash
 echo "meson $*" >> "$MOCK_LOG"
@@ -85,7 +73,7 @@ if PATH="$root/bin:$PATH" "$root/build.sh" --dry-run --dry-run >"$tmp/out" 2>&1;
 fi
 [[ ! -e "$root/build" ]] || fail 'duplicate flag changed build tree'
 
-# Dry-run assembles committed fork sources and configures Meson out of tree, from any cwd.
+# Dry-run assembles native sources and configures Meson out of tree, from any cwd.
 : > "$MOCK_LOG"
 (cd / && PATH="$root/bin:$PATH" "$root/build.sh" --dry-run >/dev/null)
 grep -q '^meson setup ' "$MOCK_LOG"
@@ -124,21 +112,17 @@ if PATH="$root/bin:$PATH" "$root/build.sh" --debug --debug >/dev/null 2>&1; then
     fail 'duplicate --debug unexpectedly succeeded'
 fi
 
-# A changed fork commit must first be recorded by the parent gitlink.
-printf 'updated fixture source\n' > "$root/forks/cage/cage.c"
-git -C "$root/forks/cage" add cage.c
-git -C "$root/forks/cage" commit -q -m 'updated fixture source'
-: > "$MOCK_LOG"
-if PATH="$root/bin:$PATH" "$root/build.sh" --dry-run >"$tmp/out" 2>&1; then
-    fail 'build unexpectedly accepted a commit different from the parent gitlink'
-fi
-grep -q 'update the parent gitlink before building' "$tmp/out"
-[[ ! -s "$MOCK_LOG" ]] || fail 'Meson ran before the parent gitlink was updated'
-git -C "$root" update-index --cacheinfo "160000,$(git -C "$root/forks/cage" rev-parse HEAD),forks/cage"
+# A changed native source is staged anew on the next build.
+printf 'updated fixture source\n' > "$root/native-src/cage/cage.c"
 : > "$MOCK_LOG"
 PATH="$root/bin:$PATH" "$root/build.sh" --dry-run >/dev/null
 grep -q '^meson setup ' "$MOCK_LOG"
-grep -q 'updated fixture source' "$root/build/source/cage-0.3.0/cage.c" || fail 'changed commit was not staged'
+grep -q 'updated fixture source' "$root/build/source/cage-0.3.0/cage.c" || fail 'changed native source was not restaged'
+# An unchanged tree is not re-staged: the prepared marker keeps the staged tree current.
+touch "$root/build/source/cage-0.3.0/.sentinel"
+: > "$MOCK_LOG"
+PATH="$root/bin:$PATH" "$root/build.sh" --dry-run >/dev/null
+[[ -e "$root/build/source/cage-0.3.0/.sentinel" ]] || fail 'unchanged inputs triggered a restage'
 
 # A compile failure propagates and prevents installation.
 root="$tmp/failure"
@@ -184,16 +168,28 @@ fi
 grep -q 'building the cage-xtmapper ELF failed' "$tmp/out"
 grep -q '^previous build$' "$root/build/installed/usr/local/bin/cage-xtmapper" || fail 'failed Go build replaced the staged application'
 
-# An uninitialized submodule checkout is reported before invoking Meson.
-root="$tmp/uninitialized"
+# A missing native tree is reported before invoking Meson.
+root="$tmp/missing"
 make_fixture "$root"
-rm -rf -- "$root/forks/wlroots-xtmapper/.git"
+rm -rf -- "$root/native-src/wlroots-xtmapper"
 export MOCK_ROOT="$root"
 : > "$MOCK_LOG"
 if PATH="$root/bin:$PATH" "$root/build.sh" --dry-run >"$tmp/out" 2>&1; then
-    fail 'uninitialized wlroots checkout unexpectedly succeeded'
+    fail 'missing wlroots tree unexpectedly succeeded'
 fi
-grep -q 'submodule is not initialized' "$tmp/out"
-[[ ! -s "$MOCK_LOG" ]] || fail 'Meson ran with an uninitialized submodule'
+grep -q 'source is missing' "$tmp/out"
+[[ ! -s "$MOCK_LOG" ]] || fail 'Meson ran with a missing native tree'
+
+# Git metadata inside a native source tree is refused.
+root="$tmp/git-metadata"
+make_fixture "$root"
+mkdir -p -- "$root/native-src/cage/.git"
+export MOCK_ROOT="$root"
+: > "$MOCK_LOG"
+if PATH="$root/bin:$PATH" "$root/build.sh" --dry-run >"$tmp/out" 2>&1; then
+    fail 'native tree with Git metadata unexpectedly succeeded'
+fi
+grep -q 'must not contain Git metadata' "$tmp/out"
+[[ ! -s "$MOCK_LOG" ]] || fail 'Meson ran with Git metadata in a native tree'
 
 echo 'build.sh tests passed'

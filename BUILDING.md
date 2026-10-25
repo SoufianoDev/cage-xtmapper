@@ -19,30 +19,27 @@ Wayland 1.24, libxkbcommon 1.8, and Pixman 0.46 use bundled sources. Other depen
 
 ## Build
 
-Clone the branch you intend to work on, including its submodules:
+Clone the branch you intend to work on:
 
 ```bash
-git clone --recurse-submodules -b <branch> https://github.com/Xtr126/cage-xtmapper
+git clone -b <branch> https://github.com/Xtr126/cage-xtmapper
 cd cage-xtmapper
 ./build.sh
 ```
 
-For an existing checkout:
-
-```bash
-git submodule update --init --recursive
-./build.sh
-```
+For an existing checkout, just run `./build.sh`. The native Cage and wlroots
+sources are committed under `native-src/`; no submodule initialization or
+network fetch is needed.
 
 The default is a release build. Build output stays under ignored `build/`:
 
 | Path | Contents |
 |---|---|
-| `build/source/` | Source assembled from the committed native submodule trees. |
+| `build/source/` | Source assembled from the committed `native-src/` trees. |
 | `build/meson/` | Meson state, native objects, and archives. |
 | `build/native/pkgconfig/cage-xtmapper-native.pc` | Generated cgo link contract derived from Ninja's dependency graph. |
 | `build/go/cage-xtmapper` | Final application ELF. |
-| `build/go/provenance.txt` | Build mode, native commits, input fingerprint, Go version. |
+| `build/go/provenance.txt` | Build mode, input fingerprint, Go version. |
 | `build/go/build-info.json` | Build-time source/ELF digests, commits, toolchains, Meson options, dependencies, runtime requirements, license notices. |
 | `build/installed/usr/local/bin/cage-xtmapper` | One-file build staging area; this is not the managed system installation. |
 
@@ -76,7 +73,7 @@ go run ./tools/release verify build/releases/cage-xtmapper-v0.3.0-local.tar
 sudo ./install.sh install --archive build/releases/cage-xtmapper-v0.3.0-local.tar
 ```
 
-Use `update` for an existing managed installation. The packager refuses stale source/ELF digests or an existing output archive. Rebuild after changing runtime sources, source tools, or build scripts. Its manifest records a dirty checkout when applicable; a commit ID alone does not describe uncommitted changes.
+Use `update` for an existing managed installation. The packager refuses stale source/ELF digests, a stale native-input fingerprint, or an existing output archive. Rebuild after changing runtime sources, source tools, native sources, or build scripts. Its manifest records a dirty checkout when applicable; a commit ID alone does not describe uncommitted changes.
 
 The archive contains only the ELF, manifest, checksums, and license notices. The source-only installer compiles `tools/install` using the matching checkout's Go module; keep `install.sh`, `go.mod`, `tools/`, and `internal/` together. [Installation And Recovery](docs/installation.md) defines its commands, ownership model, and transaction guarantees.
 
@@ -84,9 +81,16 @@ License collection uses pinned native source notices and the installed Go toolch
 
 ## Pinned Source Inputs
 
-Cage and wlroots are submodules pinned by this repository's gitlinks. Their development branches are recorded in `.gitmodules`: Cage `codex/xtmapper-v0.3.0` and wlroots `codex/xtmapper-v0.20.2`.
+Cage and wlroots live as ordinary committed files under `native-src/cage` and
+`native-src/wlroots-xtmapper`. `native-src/ORIGINS` records each tree's
+upstream URL, revision, and imported commit for release provenance, and
+`native-src/README.md` documents how the trees were imported.
 
-The build requires clean, committed fork trees matching the parent index. It assembles those commits under `build/source/` and keeps Meson state under `build/meson/`. Dependency archives and Meson wraps remain maintained inputs; do not regenerate exported source patches.
+`build.sh` fingerprints every native build input (both trees, `ORIGINS`,
+Meson wraps, dependency archives, `build.sh`, the Clang version, and the build
+type) before staging, and the packager recomputes that fingerprint so a changed
+input can never produce a stale package. Dependency archives and Meson wraps
+remain maintained inputs; do not regenerate exported source patches.
 
 Verify the dependency archives with:
 

@@ -305,6 +305,21 @@ func RecordBuild(repo string) error {
 			provenance[name] = value
 		}
 	}
+	if !release.ValidDigest(provenance["fingerprint"]) {
+		return fmt.Errorf("missing or invalid input fingerprint in provenance.txt; rerun ./build.sh")
+	}
+	commits, origins, err := NativeOrigins(repo)
+	if err != nil {
+		return err
+	}
+	sourceDigests := make(map[string]string, len(nativeTrees))
+	for key, tree := range nativeTrees {
+		digest, err := NativeSourceDigest(repo, tree)
+		if err != nil {
+			return err
+		}
+		sourceDigests[key] = digest
+	}
 	readInfo := func(name string, value any) error {
 		data, err := os.ReadFile(filepath.Join(build, "meson/meson-info", name))
 		if err != nil {
@@ -336,8 +351,9 @@ func RecordBuild(repo string) error {
 		}
 	}
 	info := buildInfo{Manifest: release.Manifest{
-		SchemaVersion: 1, Application: release.App, Target: map[string]string{"os": "linux", "architecture": arch},
-		ELFSHA256: release.Digest(data), Licenses: licenses, NativeCommits: map[string]string{"cage": provenance["cage"], "wlroots": provenance["wlroots"]},
+		SchemaVersion: release.ManifestSchemaVersion, Application: release.App, Target: map[string]string{"os": "linux", "architecture": arch},
+		ELFSHA256: release.Digest(data), Licenses: licenses, NativeCommits: commits,
+		NativeSourceDigests: sourceDigests, NativeOrigins: origins,
 		Toolchains: map[string]string{"c": compilers.Host.C.FullVersion},
 		Build:      release.Build{CGOEnabled: true, GoFlags: []string{"-a"}, NativeInputsSHA256: provenance["fingerprint"], MesonOptions: make(map[string]any)},
 	}, LicenseTexts: texts}
@@ -397,16 +413,12 @@ func Package(repo, version, output string) error {
 	if err := release.DecodeJSON(data, &info); err != nil {
 		return err
 	}
+	if err := VerifyFresh(repo, &info.Manifest); err != nil {
+		return err
+	}
 	binary, err := os.ReadFile(filepath.Join(repo, "build/go", release.App))
 	if err != nil {
 		return err
-	}
-	sourceDigest, err := SourceDigest(repo)
-	if err != nil {
-		return err
-	}
-	if info.ELFSHA256 != release.Digest(binary) || info.SourceSHA256 != sourceDigest {
-		return fmt.Errorf("build provenance is stale; run ./build.sh")
 	}
 	info.Version = version
 	info.ReleaseID = version + "-" + info.Target["architecture"] + "-" + info.ELFSHA256[:16]

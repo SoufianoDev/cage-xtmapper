@@ -51,10 +51,15 @@ func fixture(t *testing.T, binary []byte, version string) (map[string][]byte, st
 	dirty := true
 	id := version + "-" + arch + "-" + release.Digest(binary)[:16]
 	manifest := release.Manifest{
-		SchemaVersion: 1, Application: release.App, Version: version, ReleaseID: id,
+		SchemaVersion: release.ManifestSchemaVersion, Application: release.App, Version: version, ReleaseID: id,
 		Target: map[string]string{"os": "linux", "architecture": arch}, MainCommit: strings.Repeat("1", 40),
 		MainDirty: &dirty, SourceSHA256: strings.Repeat("4", 64), ELFSHA256: release.Digest(binary),
 		NativeCommits:       map[string]string{"cage": strings.Repeat("2", 40), "wlroots": strings.Repeat("3", 40)},
+		NativeSourceDigests: map[string]string{"cage": strings.Repeat("6", 64), "wlroots": strings.Repeat("7", 64)},
+		NativeOrigins: map[string]release.NativeOrigin{
+			"cage":    {URL: "https://example.invalid/cage.git", Revision: strings.Repeat("8", 40)},
+			"wlroots": {URL: "https://example.invalid/wlroots.git", Revision: strings.Repeat("9", 40)},
+		},
 		Toolchains:          map[string]string{"go": "fixture", "meson": "fixture", "c": "fixture"},
 		Build:               release.Build{CGOEnabled: true, MesonOptions: map[string]any{"fixture": true}, GoFlags: []string{}, GoBuildInfo: "fixture", NativeInputsSHA256: strings.Repeat("5", 64)},
 		Dependencies:        []release.Dependency{{Name: "fixture", Version: "1", Selection: "test"}},

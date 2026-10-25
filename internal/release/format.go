@@ -27,24 +27,47 @@ const maxMembers = 256
 var ID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 var commitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var originPattern = regexp.MustCompile(`^https://\S+$`)
 var glibcPattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)+$`)
 
+// ValidCommit reports whether s is a full 40-hex commit id.
+func ValidCommit(s string) bool { return commitPattern.MatchString(s) }
+
+// ValidDigest reports whether s is a lowercase hex SHA-256 digest.
+func ValidDigest(s string) bool { return digestPattern.MatchString(s) }
+
+// ValidOriginURL reports whether s is a non-empty https origin URL.
+func ValidOriginURL(s string) bool { return originPattern.MatchString(s) }
+
+// ManifestSchemaVersion is the current build-info manifest schema. Schema 1
+// (pre-fingerprint releases) carries no native source digests or origin records
+// and is accepted only as legacy input.
+const ManifestSchemaVersion = 2
+
 type Manifest struct {
-	SchemaVersion       int                 `json:"schema_version"`
-	Application         string              `json:"application"`
-	Version             string              `json:"version"`
-	ReleaseID           string              `json:"release_id"`
-	Target              map[string]string   `json:"target"`
-	MainCommit          string              `json:"main_commit"`
-	MainDirty           *bool               `json:"main_dirty"`
-	NativeCommits       map[string]string   `json:"native_commits"`
-	SourceSHA256        string              `json:"source_sha256"`
-	ELFSHA256           string              `json:"elf_sha256"`
-	Toolchains          map[string]string   `json:"toolchains"`
-	Build               Build               `json:"build"`
-	Dependencies        []Dependency        `json:"dependencies"`
-	RuntimeRequirements RuntimeRequirements `json:"runtime_requirements"`
-	Licenses            []License           `json:"licenses"`
+	SchemaVersion       int                     `json:"schema_version"`
+	Application         string                  `json:"application"`
+	Version             string                  `json:"version"`
+	ReleaseID           string                  `json:"release_id"`
+	Target              map[string]string       `json:"target"`
+	MainCommit          string                  `json:"main_commit"`
+	MainDirty           *bool                   `json:"main_dirty"`
+	NativeCommits       map[string]string       `json:"native_commits"`
+	NativeSourceDigests map[string]string       `json:"native_source_digests"`
+	NativeOrigins       map[string]NativeOrigin `json:"native_origins"`
+	SourceSHA256        string                  `json:"source_sha256"`
+	ELFSHA256           string                  `json:"elf_sha256"`
+	Toolchains          map[string]string       `json:"toolchains"`
+	Build               Build                   `json:"build"`
+	Dependencies        []Dependency            `json:"dependencies"`
+	RuntimeRequirements RuntimeRequirements     `json:"runtime_requirements"`
+	Licenses            []License               `json:"licenses"`
+}
+
+// NativeOrigin is the declared upstream origin of a vendored native source tree.
+type NativeOrigin struct {
+	URL      string `json:"url"`
+	Revision string `json:"revision"`
 }
 
 type Build struct {
@@ -148,12 +171,25 @@ func ValidateContents(files map[string][]byte, expectedArch string) (*Manifest, 
 	if err := DecodeJSON(files["manifest.json"], &m); err != nil {
 		return nil, fmt.Errorf("manifest: %w", err)
 	}
-	if m.SchemaVersion != 1 || m.Application != App || !ID.MatchString(m.Version) || !ID.MatchString(m.ReleaseID) {
+	if (m.SchemaVersion != 1 && m.SchemaVersion != ManifestSchemaVersion) || m.Application != App ||
+		!ID.MatchString(m.Version) || !ID.MatchString(m.ReleaseID) {
 		return nil, fmt.Errorf("unknown manifest format or invalid release identity")
 	}
 	if !commitPattern.MatchString(m.MainCommit) || m.MainDirty == nil || !digestPattern.MatchString(m.SourceSHA256) ||
 		len(m.NativeCommits) != 2 || !commitPattern.MatchString(m.NativeCommits["cage"]) || !commitPattern.MatchString(m.NativeCommits["wlroots"]) {
 		return nil, fmt.Errorf("missing or invalid source provenance")
+	}
+	if m.SchemaVersion == ManifestSchemaVersion {
+		if len(m.NativeSourceDigests) != 2 || len(m.NativeOrigins) != 2 {
+			return nil, fmt.Errorf("missing native source digests or origins")
+		}
+		for _, key := range []string{"cage", "wlroots"} {
+			origin, ok := m.NativeOrigins[key]
+			if !digestPattern.MatchString(m.NativeSourceDigests[key]) || !ok ||
+				!originPattern.MatchString(origin.URL) || !commitPattern.MatchString(origin.Revision) {
+				return nil, fmt.Errorf("invalid native provenance for %s", key)
+			}
+		}
 	}
 	for _, name := range []string{"go", "meson", "c"} {
 		if m.Toolchains[name] == "" {

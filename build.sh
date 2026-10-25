@@ -49,41 +49,25 @@ source_root="$build_root/source"
 source_dir="$source_root/cage-0.3.0"
 meson_build_dir="$build_root/meson"
 prepared_marker='.cage-xtmapper-prepared'
-cage_checkout="$script_dir/forks/cage"
-wlroots_checkout="$script_dir/forks/wlroots-xtmapper"
+cage_source="$script_dir/native-src/cage"
+wlroots_source="$script_dir/native-src/wlroots-xtmapper"
 
 fail() {
     echo "build.sh: $*" >&2
     exit 1
 }
 
-require_checkout() {
-    local name="$1" path="$2" checkout_root expected_root
-    [[ -d "$path" ]] || fail "$name submodule is missing at $path. Clone with --recurse-submodules or run 'git submodule update --init --recursive'."
-    git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "$name submodule is not initialized at $path. Run 'git submodule update --init --recursive'."
-    checkout_root="$(git -C "$path" rev-parse --show-toplevel)"
-    expected_root="$(cd -- "$path" && pwd -P)"
-    [[ "$checkout_root" == "$expected_root" ]] || fail "$name submodule is not initialized at $path. Run 'git submodule update --init --recursive'."
+require_native_tree() {
+    local name="$1" path="$2"
+    [[ -d "$path" ]] || fail "$name source is missing at $path; a normal checkout of this repository provides it under native-src/"
+    [[ ! -e "$path/.git" ]] || fail "$name source at $path must not contain Git metadata"
 }
 
-require_checkout Cage "$cage_checkout"
-require_checkout wlroots "$wlroots_checkout"
-
-require_pinned_commit() {
-    local name="$1" relative_path="$2" checkout="$3" entry mode pinned_commit stage current_commit
-    entry="$(git -C "$script_dir" ls-files --stage -- "$relative_path")"
-    [[ -n "$entry" ]] || fail "$name submodule is not recorded in the parent index at $relative_path"
-    read -r mode pinned_commit stage _ <<<"$entry"
-    [[ "$mode" == 160000 && "$stage" == 0 ]] || fail "$name path $relative_path is not a resolved submodule gitlink"
-    current_commit="$(git -C "$checkout" rev-parse HEAD)"
-    [[ "$current_commit" == "$pinned_commit" ]] || fail "$name checkout is at $current_commit but the parent pins $pinned_commit; update the parent gitlink before building"
-    [[ -z "$(git -C "$checkout" status --porcelain)" ]] || fail "$name checkout has uncommitted changes; commit them before building the pinned source"
-}
-
-require_pinned_commit Cage forks/cage "$cage_checkout"
-require_pinned_commit wlroots forks/wlroots-xtmapper "$wlroots_checkout"
+require_native_tree Cage "$cage_source"
+require_native_tree wlroots "$wlroots_source"
 command -v clang >/dev/null 2>&1 || fail "Clang (clang) is required to build the native code"
 export CC=clang
+command -v go >/dev/null 2>&1 || fail "the Go toolchain (go) is required to build cage-xtmapper"
 
 shopt -s nullglob
 wrapfiles=("$script_dir"/meson_wrapfiles/*)
@@ -92,23 +76,18 @@ dependencies=("$script_dir"/wlroots_deps/*)
 ((${#dependencies[@]} > 0)) || fail "No wlroots dependency archives found"
 
 input_fingerprint() {
-    {
-        git -C "$cage_checkout" rev-parse HEAD
-        git -C "$wlroots_checkout" rev-parse HEAD
-        clang --version
-        sha256sum -- "${wrapfiles[@]}" "${dependencies[@]}"
-    } | sha256sum | cut -d ' ' -f 1
+    (cd -- "$script_dir" && go run ./tools/release input-fingerprint --build-type "$build_type")
 }
 
-extract_git_tree() {
-    local checkout="$1" destination="$2" description="$3"
-    echo "Assembling $description from $(git -C "$checkout" rev-parse --short HEAD)"
+stage_tree() {
+    local source="$1" destination="$2" description="$3"
+    echo "Assembling $description from native-src"
     mkdir -p -- "$destination"
-    git -C "$checkout" archive --format=tar HEAD | tar -xf - -C "$destination" || fail "Failed to assemble $description from $checkout"
+    cp -a -- "$source/." "$destination/" || fail "Failed to assemble $description from $source"
 }
 
 mkdir -p -- "$build_root"
-current_fingerprint="$(input_fingerprint)"
+current_fingerprint="$(input_fingerprint)" || fail "computing the build-input fingerprint failed"
 if [[ -d "$source_dir" && -f "$source_dir/$prepared_marker" ]]; then
     prepared_fingerprint="$(<"$source_dir/$prepared_marker")"
 else
@@ -119,8 +98,8 @@ if [[ "$prepared_fingerprint" != "$current_fingerprint" ]]; then
     rm -rf -- "$source_dir"
     rm -rf -- "$meson_build_dir"
     mkdir -p -- "$source_dir/subprojects/wlroots/subprojects/packagefiles"
-    extract_git_tree "$cage_checkout" "$source_dir" Cage
-    extract_git_tree "$wlroots_checkout" "$source_dir/subprojects/wlroots" wlroots
+    stage_tree "$cage_source" "$source_dir" Cage
+    stage_tree "$wlroots_source" "$source_dir/subprojects/wlroots" wlroots
     cp -- "${wrapfiles[@]}" "$source_dir/subprojects/wlroots/subprojects/"
     ln -sf -- "${dependencies[@]}" "$source_dir/subprojects/wlroots/subprojects/packagefiles/"
     printf '%s\n' "$current_fingerprint" > "$source_dir/$prepared_marker"
@@ -153,9 +132,6 @@ fi
 if ! command -v ninja >/dev/null; then
     fail "ninja is required to derive the Go link contract"
 fi
-if ! command -v go >/dev/null 2>&1; then
-    fail "the Go toolchain (go) is required to build cage-xtmapper"
-fi
 
 meson compile -C "$meson_build_dir"
 
@@ -172,10 +148,8 @@ pc_file="$build_root/native/pkgconfig/cage-xtmapper-native.pc"
 if ! (cd "$script_dir" && CGO_ENABLED=1 PKG_CONFIG_PATH="$build_root/native/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" go build -a -o "$build_root/go/cage-xtmapper" ./cmd/cage-xtmapper); then
     fail "building the cage-xtmapper ELF failed"
 fi
-printf 'build_type=%s\ncage=%s\nwlroots=%s\nfingerprint=%s\n%s\n' \
+printf 'build_type=%s\nfingerprint=%s\n%s\n' \
     "$build_type" \
-    "$(git -C "$cage_checkout" rev-parse HEAD)" \
-    "$(git -C "$wlroots_checkout" rev-parse HEAD)" \
     "$current_fingerprint" \
     "$(go version)" > "$build_root/go/provenance.txt"
 (cd -- "$script_dir" && go run ./tools/release record-build) || fail "recording release build metadata failed"

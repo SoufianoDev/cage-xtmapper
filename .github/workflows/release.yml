@@ -13,8 +13,6 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
 
       - name: Install build dependencies
         run: sudo ./install_deps.sh

@@ -4,18 +4,18 @@ This checkout is the `v0.3.0` line: Cage 0.3.0 with wlroots 0.20.2. The `v0.2.0`
 
 ## Updating Cage or wlroots
 
-Cage and wlroots are pinned as submodules under `forks/`. Their development branches are recorded in `.gitmodules`. Make and publish a dependency change in this order:
+Cage and wlroots are ordinary committed trees under `native-src/cage` and `native-src/wlroots-xtmapper`, with their upstream provenance in `native-src/ORIGINS`. Make and publish a dependency change in this order:
 
-1. Switch the dependency submodule to its recorded development branch, edit it, and commit the change there.
-2. Push that fork commit.
-3. Update and commit the parent repository gitlink with `git add forks/cage` or `git add forks/wlroots-xtmapper`.
-4. Build only after the fork commit and parent gitlink are recorded.
+1. Edit the tree under `native-src/` directly.
+2. Update the corresponding `native-src/ORIGINS` entry when the imported revision changes.
+3. Rebuild with `./build.sh` so the input fingerprint and manifest digests match the new sources.
+4. Commit the tree, `ORIGINS`, and the rebuilt provenance together.
 
-The build stages committed submodule trees under ignored `build/source/`; Meson state is separate under `build/meson/`. Do not regenerate exported source patches. Dependency archives, Meson wraps, and `SHA256SUMS` are maintained inputs.
+The build stages `native-src/` trees under ignored `build/source/`; Meson state is separate under `build/meson/`. Do not regenerate exported source patches. Dependency archives, Meson wraps, and `SHA256SUMS` are maintained inputs.
 
 ## Backports
 
-When a fix also applies to `v0.2.0` or `v0.1.5`, make a separate backport commit on that branch and adapt it to that branch's existing source and build layout. Do not assume the v0.3.0 submodule pins, CI steps, dependency inputs, or installer apply there. Run that branch's documented checks and preserve any contributor attribution carried by the original change.
+When a fix also applies to `v0.2.0` or `v0.1.5`, make a separate backport commit on that branch and adapt it to that branch's existing source and build layout. Do not assume the v0.3.0 native source layout, CI steps, dependency inputs, or installer apply there. Run that branch's documented checks and preserve any contributor attribution carried by the original change.
 
 ## Checks and pull requests
 
@@ -38,4 +38,4 @@ Use `-count=1`: integration suites build or use a separate application, which Go
 
 The shell launcher remains a behavior reference for its tests. Installed and packaged applications use the single `cage-xtmapper` ELF. Keep installer tooling in the source checkout and preserve the release allowlist.
 
-Pull requests should explain the user-visible behavior, list checks run, and include relevant dependency fork commits before the parent pin. Preserve prior contributor credit when adapting code; see [CONTRIBUTORS.md](CONTRIBUTORS.md).
+Pull requests should explain the user-visible behavior, list checks run, and include the `native-src/ORIGINS` updates for any dependency source change. Preserve prior contributor credit when adapting code; see [CONTRIBUTORS.md](CONTRIBUTORS.md).

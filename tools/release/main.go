@@ -15,7 +15,7 @@ func run(args []string) error {
 		return err
 	}
 	if len(args) == 0 {
-		return fmt.Errorf("usage: go run ./tools/release record-build|package|verify|link-contract")
+		return fmt.Errorf("usage: go run ./tools/release record-build|input-fingerprint|package|verify|link-contract")
 	}
 	switch args[0] {
 	case "record-build":
@@ -46,6 +46,21 @@ func run(args []string) error {
 			return err
 		}
 		fmt.Println(*output)
+		return nil
+	case "input-fingerprint":
+		flags := flag.NewFlagSet("input-fingerprint", flag.ContinueOnError)
+		buildType := flags.String("build-type", "", "Meson build type")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *buildType == "" || flags.NArg() != 0 {
+			return fmt.Errorf("input-fingerprint requires --build-type")
+		}
+		digest, err := releasebuild.NativeInputDigest(repo, *buildType)
+		if err != nil {
+			return err
+		}
+		fmt.Println(digest)
 		return nil
 	case "verify":
 		if len(args) != 2 {

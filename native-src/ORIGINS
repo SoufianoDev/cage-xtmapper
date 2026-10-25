@@ -1,0 +1,7 @@
+# Imported native source provenance for cage-xtmapper.
+# Fields: key, import commit (the upstream-lineage commit whose tree was imported),
+# origin repository URL, origin revision available on the remote at import time.
+# Maintained by hand; consumed by internal/releasebuild (native_commits/native_origins).
+# Do not invent revisions: update only when a reviewed import or upstream merge changes them.
+cage 3195865db1548e8a8101de82284f03697e835f14 https://github.com/Xtr126/cage.git c317ff85f05bd3f671bbb18b6b985b0d43b62cfe
+wlroots cd59bb46568e491b58574c5bc6fb24b97a32ae8f https://github.com/Xtr126/wlroots-xtmapper.git cd59bb46568e491b58574c5bc6fb24b97a32ae8f

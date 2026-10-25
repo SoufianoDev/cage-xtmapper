@@ -66,7 +66,7 @@ cage-xtmapper --window-width 1280 --window-height 720 --refresh-mhz 60000
 | `--xtmapper-args ARG...` | Append all remaining arguments to XtMapper's default `--wayland-client` argument. |
 | `-h`, `--help` | Show help. |
 
-Press **F10** to switch mouse handling between XtMapper and Waydroid. The Cage fork's [`togglekey.h`](forks/cage/togglekey.h) defines this key.
+Press **F10** to switch mouse handling between XtMapper and Waydroid. The Cage fork's [`togglekey.h`](native-src/cage/togglekey.h) defines this key.
 
 ## Common Setup Issues
 

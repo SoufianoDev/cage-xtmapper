@@ -117,7 +117,7 @@ func TestInvalidArchivesNeverReachInstallation(t *testing.T) {
 func TestManifestAndELFValidation(t *testing.T) {
 	files, _ := fixture(t, readFile(t, "/bin/true"), "v1")
 	path := filepath.Join(t.TempDir(), "release.tar")
-	for _, field := range []string{"main_dirty", "source_sha256", "native_commits", "toolchains", "build", "runtime_requirements", "licenses"} {
+	for _, field := range []string{"main_dirty", "source_sha256", "native_commits", "native_source_digests", "native_origins", "toolchains", "build", "runtime_requirements", "licenses"} {
 		t.Run("missing "+field, func(t *testing.T) {
 			changed := maps.Clone(files)
 			var manifest map[string]any
@@ -161,6 +161,56 @@ func TestManifestAndELFValidation(t *testing.T) {
 	if _, err := release.ValidateContents(files, other); err == nil {
 		t.Fatal("accepted wrong host architecture")
 	}
+}
+
+func TestManifestSchemaVersions(t *testing.T) {
+	files, _ := fixture(t, readFile(t, "/bin/true"), "v1")
+	reformat := func(t *testing.T, mutate func(map[string]any)) map[string][]byte {
+		t.Helper()
+		changed := maps.Clone(files)
+		var manifest map[string]any
+		must(t, json.Unmarshal(changed["manifest.json"], &manifest))
+		mutate(manifest)
+		changed["manifest.json"] = jsonBytes(t, manifest)
+		changed["SHA256SUMS"] = release.Checksums(changed)
+		return changed
+	}
+	t.Run("legacy schema 1 without native digests", func(t *testing.T) {
+		legacy := reformat(t, func(manifest map[string]any) {
+			manifest["schema_version"] = 1
+			delete(manifest, "native_source_digests")
+			delete(manifest, "native_origins")
+		})
+		if _, err := release.ValidateContents(legacy, ""); err != nil {
+			t.Fatalf("legacy manifest rejected: %v", err)
+		}
+	})
+	t.Run("unknown future schema", func(t *testing.T) {
+		future := reformat(t, func(manifest map[string]any) { manifest["schema_version"] = 99 })
+		if _, err := release.ValidateContents(future, ""); err == nil {
+			t.Fatal("accepted unknown schema")
+		}
+	})
+	t.Run("invalid origin URL", func(t *testing.T) {
+		insecure := reformat(t, func(manifest map[string]any) {
+			origins := manifest["native_origins"].(map[string]any)
+			cage := origins["cage"].(map[string]any)
+			cage["url"] = "http://example.invalid/cage.git"
+		})
+		if _, err := release.ValidateContents(insecure, ""); err == nil {
+			t.Fatal("accepted non-https origin")
+		}
+	})
+	t.Run("non-commit native revision", func(t *testing.T) {
+		short := reformat(t, func(manifest map[string]any) {
+			origins := manifest["native_origins"].(map[string]any)
+			wlroots := origins["wlroots"].(map[string]any)
+			wlroots["revision"] = "branch-name"
+		})
+		if _, err := release.ValidateContents(short, ""); err == nil {
+			t.Fatal("accepted non-commit revision")
+		}
+	})
 }
 
 func TestStrictJSON(t *testing.T) {
