@@ -407,7 +407,7 @@ func TestStartupDeadlineCoversWaydroidLifecycle(t *testing.T) {
 				t.Fatalf("startup %s timeout exit %d, stderr %s", phase, code, stderr)
 			}
 			wantPhase := map[string]string{
-				"stop": "stopping the Waydroid session",
+				"stop":      "stopping the Waydroid session",
 				"container": "starting the Waydroid container",
 			}[phase]
 			if !strings.Contains(stderr, "Android startup did not complete within 2 seconds while "+wantPhase) {

@@ -376,7 +376,6 @@ func TestEventStreamBinaryPreserved(t *testing.T) {
 	}
 }
 
-
 // TestEventStreamSlowConsumerPreservesBytes applies backpressure throughout
 // the transfer, then verifies that every byte, including NULs and the final
 // event record, reaches the remote side unchanged.
