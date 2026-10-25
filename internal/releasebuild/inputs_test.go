@@ -296,3 +296,22 @@ func TestNativeSourceDigestSymlinkTargets(t *testing.T) {
 		t.Fatal("missing symlink target accepted")
 	}
 }
+
+
+func TestNativeSourceDigestWithSymlinkedRepositoryPath(t *testing.T) {
+	realRepo := t.TempDir()
+	tree := filepath.Join(realRepo, "native-src/cage")
+	writeTree(t, tree, map[string]string{"target.c": "inside"})
+	if err := os.Symlink("target.c", filepath.Join(tree, "link.c")); err != nil {
+		t.Fatal(err)
+	}
+
+	linkParent := t.TempDir()
+	repoLink := filepath.Join(linkParent, "repo")
+	if err := os.Symlink(realRepo, repoLink); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NativeSourceDigest(repoLink, "native-src/cage"); err != nil {
+		t.Fatalf("valid in-tree symlink rejected through symlinked repo path: %v", err)
+	}
+}
