@@ -100,12 +100,16 @@ func (c *child) cleanup() {
 			time.Sleep(20 * time.Millisecond)
 		}
 		_ = c.kill(syscall.SIGKILL)
-		timer := time.NewTimer(cleanupKillGrace)
-		defer timer.Stop()
-		select {
-		case <-c.dead:
-		case <-timer.C:
-			fmt.Fprintf(os.Stderr, "Error: cleanup did not complete for process group %d\n", c.cmd.Process.Pid)
+		// Wait for the whole group to disappear, not just the leader: the
+		// leader may be reaped long before its descendants die, and callers
+		// observe the group immediately after cleanup returns.
+		deadline = time.Now().Add(cleanupKillGrace)
+		for !(c.exited() && errors.Is(c.kill(0), syscall.ESRCH)) {
+			if time.Now().After(deadline) {
+				fmt.Fprintf(os.Stderr, "Error: cleanup did not complete for process group %d\n", c.cmd.Process.Pid)
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
 		}
 	})
 }
