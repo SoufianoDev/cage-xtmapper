@@ -79,6 +79,8 @@ The archive contains only the ELF, manifest, checksums, and license notices. The
 
 License collection uses pinned native source notices and the installed Go toolchain notice. If the native link selects LittleCMS's static GPL plugins, packaging also needs their installed component notices and complete GPL-3 text. Unknown static libraries without a license rule stop metadata generation rather than producing an incomplete archive.
 
+Whether those plugins are linked depends on the build host's lcms2 development files: `wlroots` links lcms2 for color management, and when the host's `lcms2` package exposes `liblcms2_fast_float.a` or `liblcms2_threaded.a` to the static link, those GPL-3.0-only archives are part of the produced ELF. In that case the archive's license inventory records the components and the complete GPL-3 text, and distribution of those components is governed by GPL-3.0 rather than by the MIT notices that cover the project's own sources; review the linked component set recorded in the release manifest before publishing. Packaging fails closed on an unrecognized static library instead of omitting a license.
+
 ## Pinned Source Inputs
 
 Cage and wlroots live as ordinary committed files under `native-src/cage` and
