@@ -40,6 +40,10 @@ func waydroidTransport(cfg *Config) transport {
 		argv := append([]string{sudo, waydroid}, args...)
 		return exec.Command(argv[0], argv[1:]...)
 	}
+	runNonInteractive := func(args []string) *exec.Cmd {
+		argv := append([]string{sudo, "-n", waydroid}, args...)
+		return exec.Command(argv[0], argv[1:]...)
+	}
 	return transport{
 		stopSession: func(ctx context.Context) error {
 			// The old script ran `waydroid session stop` without sudo.
@@ -54,7 +58,7 @@ func waydroidTransport(cfg *Config) transport {
 			return nil
 		},
 		startContainer: func(ctx context.Context) error {
-			code, err := runInherit(ctx, run([]string{"container", "start"}), containerStartTimeout)
+			code, err := runInheritForeground(ctx, run([]string{"container", "start"}), containerStartTimeout)
 			if err != nil {
 				return fmt.Errorf("could not start the Waydroid container: %w", err)
 			}
@@ -64,10 +68,10 @@ func waydroidTransport(cfg *Config) transport {
 			return nil
 		},
 		probeCmd: func(verb string, args ...string) *exec.Cmd {
-			return run(append([]string{"shell", verb}, args...))
+			return runNonInteractive(append([]string{"shell", verb}, args...))
 		},
 		remoteShellCmd: func(cmd string) *exec.Cmd {
-			return run([]string{"shell", "--", "sh", "-c", cmd})
+			return runNonInteractive([]string{"shell", "--", "sh", "-c", cmd})
 		},
 	}
 }
