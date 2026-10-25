@@ -10,7 +10,19 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 )
+
+var terminalForeground = func() bool {
+	tty, err := os.Open("/dev/tty")
+	if err != nil {
+		return false
+	}
+	defer tty.Close()
+	var foreground int32
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, tty.Fd(), syscall.TIOCGPGRP, uintptr(unsafe.Pointer(&foreground)))
+	return errno == 0 && int(foreground) == syscall.Getpgrp()
+}
 
 var ErrTimedOut = errors.New("timed out")
 

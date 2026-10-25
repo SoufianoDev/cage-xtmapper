@@ -20,7 +20,8 @@ struct cage_xtmapper_options {
 /*
  * Run Cage exactly like the standalone main() with the given arguments
  * (getopt-style argv, argv[0] reserved for the program name, optional
- * "--" then APPLICATION... arguments for the primary client), and
+ * "--" then APPLICATION... arguments for the primary client, and a NULL
+ * pointer at argv[argc]), and
  * return the compositor exit status after full native cleanup. This
  * function must run on its own OS thread owned by the caller and
  * blocks until the compositor terminates.

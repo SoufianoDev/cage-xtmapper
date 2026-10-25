@@ -270,3 +270,29 @@ func TestNativeSourceDigestRejectsEscapingSymlink(t *testing.T) {
 		t.Fatalf("expected escaping source symlink to be rejected, got %v", err)
 	}
 }
+
+func TestNativeSourceDigestSymlinkTargets(t *testing.T) {
+	repo := t.TempDir()
+	tree := filepath.Join(repo, "native-src/cage")
+	writeTree(t, tree, map[string]string{"target.c": "one"})
+	link := filepath.Join(tree, "link.c")
+	if err := os.Symlink("target.c", link); err != nil {
+		t.Fatal(err)
+	}
+	first, err := NativeSourceDigest(repo, "native-src/cage")
+	if err != nil {
+		t.Fatalf("internal symlink rejected: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tree, "target.c"), []byte("two"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := NativeSourceDigest(repo, "native-src/cage"); err != nil || changed == first {
+		t.Fatalf("symlink target change not tracked: %v", err)
+	}
+	if err := os.Remove(filepath.Join(tree, "target.c")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NativeSourceDigest(repo, "native-src/cage"); err == nil {
+		t.Fatal("missing symlink target accepted")
+	}
+}

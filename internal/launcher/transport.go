@@ -58,7 +58,13 @@ func waydroidTransport(cfg *Config) transport {
 			return nil
 		},
 		startContainer: func(ctx context.Context) error {
-			code, err := runInheritForeground(ctx, run([]string{"container", "start"}), containerStartTimeout)
+			cmd := run([]string{"container", "start"})
+			runContainer := runInheritForeground
+			if !terminalForeground() {
+				// A background process must not let sudo read its controlling terminal.
+				cmd, runContainer = runNonInteractive([]string{"container", "start"}), runInherit
+			}
+			code, err := runContainer(ctx, cmd, containerStartTimeout)
 			if err != nil {
 				return fmt.Errorf("could not start the Waydroid container: %w", err)
 			}
