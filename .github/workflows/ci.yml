@@ -70,7 +70,7 @@ jobs:
         run: |
           format_files="$(gofmt -l cmd internal tools tests)"
           if [[ -n "$format_files" ]]; then
-            printf 'Go files need formatting:\\n%s\\n' "$format_files"
+            printf 'Go files need formatting:\n%s\n' "$format_files"
             gofmt -d cmd internal tools tests
             exit 1
           fi
