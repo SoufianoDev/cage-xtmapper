@@ -250,7 +250,6 @@ func TestPrintOutputInfoHeadless(t *testing.T) {
 	}
 }
 
-
 // TestInternalHelpFlushesStdout checks that C stdio output survives Go's
 // os.Exit path when native help is redirected through a pipe.
 func TestInternalHelpFlushesStdout(t *testing.T) {
