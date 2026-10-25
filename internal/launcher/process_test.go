@@ -2,15 +2,55 @@ package launcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
+
+func TestRunBoundedTimeoutKillsProcessGroupDescendants(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "descendant.pid")
+	cmd := exec.Command("sh", "-c", fmt.Sprintf("sleep 30 & echo $! > %q; wait", pidFile))
+	_, err := runBounded(context.Background(), cmd, 150*time.Millisecond)
+	if !errors.Is(err, ErrTimedOut) {
+		t.Fatalf("runBounded error = %v, want %v", err, ErrTimedOut)
+	}
+
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("invalid descendant PID: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+		if os.IsNotExist(err) {
+			return
+		}
+		if err == nil {
+			record := string(stat)
+			end := strings.LastIndex(record, ")")
+			if end >= 0 {
+				fields := strings.Fields(record[end+1:])
+				if len(fields) > 0 && fields[0] == "Z" {
+					return
+				}
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("descendant process %d survived process-group cleanup", pid)
+}
 
 func TestStartForegroundInheritsCallerProcessGroup(t *testing.T) {
 	cmd := exec.Command("sh", "-c", "sleep 30")
