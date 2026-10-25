@@ -240,3 +240,142 @@ esac
 		})
 	}
 }
+
+// TestTermResistantPeerCannotStallExit prevents a remote peer that ignores
+// SIGTERM from extending the bounded first-exit cleanup indefinitely: the
+// launcher must still return the initiating compositor status after the
+// escalation deadline.
+func TestTermResistantPeerCannotStallExit(t *testing.T) {
+	tools, logs := testEnv(t)
+	compositor := `#!/bin/sh
+printf '%s\n' "$$" > "$MOCK_LOG/cage.pid"
+while [ ! -s "$MOCK_LOG/remote-command" ]; do sleep 0.01; done
+exit 9
+`
+	if err := os.WriteFile(tools.SelfExe, []byte(compositor), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	waydroid := `#!/bin/sh
+case "$1 $2" in
+    'session stop'|'container start') exit 0 ;;
+    'shell getprop')
+        [ "$3" = sys.boot_completed ] && printf '1\n' || printf 'x86_64\n'
+        ;;
+    'shell pm') printf 'package:/data/app/xtmapper/base.apk\n' ;;
+    'shell --')
+        printf '%s\n' "$5" > "$MOCK_LOG/remote-command"
+        printf '%s\n' "$$" > "$MOCK_LOG/remote.pid"
+        trap '' TERM
+        sleep 600 &
+        wait "$!"
+        exit 0
+        ;;
+    *) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(tools.Waydroid, []byte(waydroid), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	code, _ := runLauncher(t, launcher.Config{Tools: tools})
+	if code != 9 {
+		t.Fatalf("exit %d, want the initiating compositor status 9", code)
+	}
+	// The TERM-resistant group must survive past the TERM grace into the
+	// SIGKILL escalation instead of ending the wait early or never.
+	if elapsed := time.Since(start); elapsed < 4*time.Second || elapsed > 15*time.Second {
+		t.Fatalf("resistant peer cleanup took %s, want the bounded escalation window", elapsed)
+	}
+	assertStopped(t, waitPID(t, filepath.Join(logs, "cage.pid")))
+	assertStopped(t, waitPID(t, filepath.Join(logs, "remote.pid")))
+}
+
+// TestFailureSurvivesLateSignalDuringCleanup keeps the initiating failure
+// status when SIGTERM arrives while cleanup of the failed run is still in
+// progress: the late signal must not replace the recorded cause with 143.
+func TestFailureSurvivesLateSignalDuringCleanup(t *testing.T) {
+	tools, logs := testEnv(t)
+	t.Setenv("XTMAPPER_BOOT_WAIT_SECONDS", "10")
+	// The compositor exits 9 once the probe appears. One group member
+	// ignores TERM (SIG_IGN traps are inherited; captured ones are not)
+	// to keep the group alive through the TERM grace, and a second
+	// member records the delivered TERM. Cleanup only runs after
+	// supervise recorded the failure, so the marker is the
+	// deterministic signal that the shutdown cause is already fixed.
+	compositor := `#!/bin/sh
+printf '%s\n' "$$" > "$MOCK_LOG/cage.pid"
+sh -c 'trap "" TERM; sleep 600 & wait "$!"' &
+sh -c 'trap "touch \"\$MOCK_LOG/comp-term\"" TERM; sleep 600' &
+while [ ! -s "$MOCK_LOG/probe.pid" ]; do sleep 0.01; done
+exit 9
+`
+	if err := os.WriteFile(tools.SelfExe, []byte(compositor), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adb := `#!/bin/sh
+if [ "$2" = getprop ]; then
+    printf '%s\n' "$$" > "$MOCK_LOG/probe.pid"
+    exec sleep 600
+fi
+exit 1
+`
+	if err := os.WriteFile(tools.ADB, []byte(adb), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan int, 1)
+	go func() { result <- launcher.Run(launcher.Config{UseADB: true, Tools: tools}) }()
+
+	termMarker := filepath.Join(logs, "comp-term")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(termMarker); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("compositor cleanup did not start in time")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case code := <-result:
+		if code != 9 {
+			t.Fatalf("late cleanup signal changed the exit to %d, want the initiating failure 9", code)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("run did not return within the cleanup budget")
+	}
+	assertStopped(t, waitPID(t, filepath.Join(logs, "cage.pid")))
+}
+
+// TestHangingBootProbeRespectsDeadline bounds a startup probe that never
+// completes: the boot deadline must include probe time and the hung probe
+// must be cleaned up without reaching the remote launch.
+func TestHangingBootProbeRespectsDeadline(t *testing.T) {
+	tools, logs := testEnv(t)
+	t.Setenv("XTMAPPER_BOOT_WAIT_SECONDS", "2")
+	adb := `#!/bin/sh
+if [ "$2" = getprop ]; then
+    printf '%s\n' "$$" > "$MOCK_LOG/probe.pid"
+    exec sleep 600
+fi
+exit 1
+`
+	if err := os.WriteFile(tools.ADB, []byte(adb), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	code, stderr := runLauncher(t, launcher.Config{UseADB: true, Tools: tools})
+	if code != 1 || !strings.Contains(stderr, "did not finish booting within 2 seconds") {
+		t.Fatalf("hanging probe exit %d, stderr %s", code, stderr)
+	}
+	if elapsed := time.Since(start); elapsed > 6*time.Second {
+		t.Fatalf("hung probe was not bounded by the boot deadline: %s", elapsed)
+	}
+	assertStopped(t, waitPID(t, filepath.Join(logs, "probe.pid")))
+	if _, err := os.Stat(filepath.Join(logs, "remote-command")); !os.IsNotExist(err) {
+		t.Fatal("remote service launched after a hung boot probe")
+	}
+}

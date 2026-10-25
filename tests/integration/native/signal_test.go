@@ -262,18 +262,85 @@ func TestInternalHelpFlushesStdout(t *testing.T) {
 	if !ok || exit.ExitCode() != 1 {
 		t.Fatalf("expected native help exit status 1, got %v (stderr %q)", err, errb.String())
 	}
-	if !bytes.Contains(out.Bytes(), []byte("Usage: cage-xtmapper")) {
+	// The first and last usage lines must both arrive: buffered output that
+	// is only partially flushed loses the tail through the pipe.
+	if !bytes.Contains(out.Bytes(), []byte("Usage: cage-xtmapper")) ||
+		!bytes.Contains(out.Bytes(), []byte("Use -- when you want to pass arguments to APPLICATION")) {
 		t.Fatalf("native C stdout was not fully flushed: %q (stderr %q)", out.String(), errb.String())
 	}
 }
 
-// TestInternalClientArguments preserves empty and trailing arguments across
-// the Go-to-C argv bridge and posix_spawnp boundary.
+// TestInternalClientArguments preserves argument vectors across the
+// Go-to-C argv bridge and the posix_spawnp boundary: argc, empty
+// arguments, arguments with separators, and long arguments must all be
+// reconstructed exactly, which requires the terminating NULL the kernel
+// copies argv from.
 func TestInternalClientArguments(t *testing.T) {
-	cmd := exec.Command(binPath, "--internal-cage", "--", "sh", "-c",
-		`test "$#" -eq 2 && test -z "$1" && test "$2" = sentinel`, "_", "", "sentinel")
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		check string
+	}{
+		{
+			name:  "empty and trailing arguments",
+			args:  []string{"_", "", "sentinel"},
+			check: `test "$#" -eq 2 && test -z "$1" && test "$2" = sentinel`,
+		},
+		{
+			name:  "single argument",
+			args:  []string{"_", "only"},
+			check: `test "$#" -eq 1 && test "$1" = only`,
+		},
+		{
+			name:  "arguments with separators",
+			args:  []string{"_", "a b", "c\td", "e\nf"},
+			check: `test "$#" -eq 3 && test "$1" = "a b" && test "$2" = "$(printf 'c\td')" && test "$3" = "$(printf 'e\nf')"`,
+		},
+		{
+			name:  "long argument",
+			args:  []string{"_", strings.Repeat("x", 65536) + "end"},
+			check: `test "$#" -eq 1 && test "${#1}" -eq 65539 && case "$1" in x*end) true ;; *) false ;; esac`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command(binPath, append([]string{"--internal-cage", "--", "sh", "-c", tc.check}, tc.args...)...)
+			var errb bytes.Buffer
+			cmd.Stderr = &errb
+			cmd.Env = headlessEnv(t)
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("native client argument vector changed: %v (stderr %q)", err, errb.String())
+			}
+		})
+	}
+}
+
+// TestInternalNoClientStarts covers the zero-argument spawn boundary
+// (optind == argc): the compositor starts without a primary client and
+// still shuts down through the embedded control path.
+func TestInternalNoClientStarts(t *testing.T) {
+	cmd := exec.Command(binPath, "--internal-cage")
 	cmd.Env = headlessEnv(t)
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("native client argument vector changed: %v", err)
+	var errb bytes.Buffer
+	cmd.Stderr = &errb
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer cmd.Process.Wait() //nolint:errcheck // status asserted below
+	time.Sleep(500 * time.Millisecond)
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		_ = cmd.Process.Kill()
+		t.Fatalf("compositor without a client did not accept termination: %v (stderr %q)", err, errb.String())
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		exit, ok := err.(*exec.ExitError)
+		if !ok || exit.ExitCode() != 143 {
+			t.Fatalf("expected 143 without a primary client, got %v (stderr %q)", err, errb.String())
+		}
+	case <-time.After(5 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatalf("clientless compositor shutdown hung (stderr %q)", errb.String())
 	}
 }
