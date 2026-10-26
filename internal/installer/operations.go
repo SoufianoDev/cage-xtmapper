@@ -169,7 +169,7 @@ func knownLegacyShell(path string) bool {
 	content := string(data)
 	shebang := strings.HasPrefix(content, "#!/usr/bin/env bash") || strings.HasPrefix(content, "#!/bin/bash")
 	return shebang && strings.Contains(content, "cage_xtmapper") &&
-		strings.Contains(content, "RemoteServiceShell") && strings.Contains(content, "BOOT_WAIT_SECONDS")
+		strings.Contains(content, "XTMAPPER_BOOT_WAIT_SECONDS must be a positive integer")
 }
 
 func knownLegacyBinary(path string) bool {

@@ -10,6 +10,7 @@ archive_override=""
 operation=auto
 test_prefix_requested=false
 archive_seen=false
+downloaded_archive=""
 
 usage() {
     cat <<'EOF'
@@ -159,7 +160,7 @@ else
     installer="$temporary/$asset"
 
     if [[ "$operation" == auto || "$operation" == install || "$operation" == update ]] && [[ "$archive_seen" == false ]]; then
-        archive_tag="\${requested_version:-$helper_release_tag}"
+        archive_tag="${requested_version:-$helper_release_tag}"
         archive_url="$repository_url/releases/download/$archive_tag"
         archive_name="cage-xtmapper-$archive_tag-$architecture.tar"
         curl --fail --location --silent --show-error --retry 3 --connect-timeout 15 --max-time 600 \
@@ -167,7 +168,7 @@ else
         curl --fail --location --silent --show-error --retry 3 --connect-timeout 15 --max-time 60 \
             --output "$temporary/$archive_name.sha256" "$archive_url/$archive_name.sha256"
         (cd "$temporary" && sha256sum --check "$archive_name.sha256")
-        forward_args+=(--archive "$temporary/$archive_name")
+        downloaded_archive="$archive_name"
     fi
 fi
 
@@ -192,10 +193,21 @@ if [[ "$operation" == auto || "$operation" == install || "$operation" == update 
     curl --fail --location --silent --show-error --retry 3 --connect-timeout 15 --max-time 60 \
         "$release_url/$archive_name.sha256" --output "$temporary/$archive_name.sha256"
     (cd "$temporary" && sha256sum --check "$archive_name.sha256")
-    forward_args+=(--archive "$temporary/$archive_name")
+    downloaded_archive="$archive_name"
 fi
 
-printf 'Cage XtMapper: operation=%s repository=%s' "$operation" "$repository"
-[[ -z "$requested_version" ]] || printf ' version=%s' "$requested_version"
-printf '\n'
-"$installer" "$operation" "${forward_args[@]}"
+if [[ "$operation" != status ]]; then
+    printf 'Cage XtMapper: operation=%s repository=%s' "$operation" "$repository"
+    [[ -z "$requested_version" ]] || printf ' version=%s' "$requested_version"
+    printf '\n'
+fi
+if [[ -n "$downloaded_archive" ]]; then
+    exec {archive_fd}< "$temporary/$downloaded_archive"
+    forward_args+=(--archive "/proc/self/fd/$archive_fd")
+fi
+exec {installer_fd}< "$installer"
+# Exec the unlinked inodes to preserve exit statuses/signals and the same pid;
+# a forked child would keep bash's cleanup trap racing files the helper reads.
+rm -rf -- "$temporary"
+trap - EXIT
+exec "/proc/self/fd/$installer_fd" "$operation" "${forward_args[@]}"

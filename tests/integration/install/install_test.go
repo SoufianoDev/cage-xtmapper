@@ -260,7 +260,7 @@ func TestKnownLegacyShellAndBinaryMigrateAutomatically(t *testing.T) {
 	h := newHarness(t, false)
 	scriptPath := filepath.Join(h.bin, "cage_xtmapper.sh")
 	binaryPath := filepath.Join(h.bin, "cage_xtmapper")
-	legacy := []byte("#!/usr/bin/env bash\nBOOT_WAIT_SECONDS=120\n# cage_xtmapper legacy launcher\n# xtr.keymapper.server.RemoteServiceShell\n")
+	legacy := []byte("#!/usr/bin/env bash\nBOOT_WAIT_SECONDS=${XTMAPPER_BOOT_WAIT_SECONDS:-120}\n# cage_xtmapper legacy launcher\n[[ $BOOT_WAIT_SECONDS =~ ^[1-9][0-9]*$ ]] || { echo 'XTMAPPER_BOOT_WAIT_SECONDS must be a positive integer'; exit 2; }\n")
 	writeFile(t, scriptPath, legacy, 0755)
 	testExecutable, err := os.Executable()
 	must(t, err)

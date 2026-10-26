@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+umask 022
+
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$repo"
 
@@ -31,16 +33,16 @@ go run ./tools/release package --version local-test-2 --output "$temporary/relea
 export XTMAPPER_INSTALLER_BIN="$temporary/install"
 ./install.sh --test-prefix "$prefix" --archive "$temporary/release-1.tar"
 ./install.sh status --test-prefix "$prefix" > "$temporary/status-install.json"
-grep -q '"state":"installed"' "$temporary/status-install.json"
+grep -q '"state": "installed"' "$temporary/status-install.json"
 
 ./install.sh --test-prefix "$prefix" --archive "$temporary/release-2.tar"
 ./install.sh status --test-prefix "$prefix" > "$temporary/status-update.json"
-grep -q '"state":"installed"' "$temporary/status-update.json"
+grep -q '"state": "installed"' "$temporary/status-update.json"
 
 ./install.sh --test-prefix "$prefix" --archive "$temporary/release-2.tar" > "$temporary/status-current.txt"
 grep -q 'Status: already up to date' "$temporary/status-current.txt"
 ./install.sh uninstall --test-prefix "$prefix"
 ./install.sh status --test-prefix "$prefix" > "$temporary/status-uninstall.json"
-grep -q '"state":"uninstalled"' "$temporary/status-uninstall.json"
+grep -q '"state": "uninstalled"' "$temporary/status-uninstall.json"
 
 echo 'Local installer lifecycle tests passed without publishing a GitHub Release.'
