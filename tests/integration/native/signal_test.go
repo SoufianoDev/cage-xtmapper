@@ -3,6 +3,7 @@ package native_test
 import (
 	"bytes"
 	"debug/elf"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -81,6 +82,99 @@ func TestSingleELFNativeLink(t *testing.T) {
 	}
 	for symbol := range want {
 		t.Errorf("native symbol was not linked into the ELF: %s", symbol)
+	}
+}
+
+// elfSymbolNames reads every name from both symbol tables of an ELF file.
+func elfSymbolNames(t *testing.T, path string) map[string]bool {
+	t.Helper()
+	file, err := elf.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	seen := map[string]bool{}
+	for _, table := range []func() ([]elf.Symbol, error){file.Symbols, file.DynamicSymbols} {
+		symbols, err := table()
+		if errors.Is(err, elf.ErrNoSymbols) {
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, symbol := range symbols {
+			seen[symbol.Name] = true
+		}
+	}
+	if len(seen) == 0 {
+		t.Fatalf("no symbol tables in %s", path)
+	}
+	return seen
+}
+
+// Debian's lcms2 package lists liblcms2_fast_float.a and liblcms2_threaded.a
+// (GPL-3-or-later plugin code) on every lcms2 link line, but the GNU linker
+// pulls an archive member only to satisfy a reference and no project code
+// registers the plugins. Pin the invariant that no plugin code reaches the
+// launcher ELF: recording those components without the code sends reviewers
+// hunting for GPL obligations that the binary does not carry, and shipping
+// the code without them would violate GPL-3 section 6.
+func TestLinkedELFContainsNoLittleCMSPluginCode(t *testing.T) {
+	names := elfSymbolNames(t, binPath)
+	for _, entry := range []string{"cmsFastFloatExtensions", "cmsThreadedExtensions"} {
+		if names[entry] {
+			t.Errorf("linked ELF contains LittleCMS GPL plugin code: %s", entry)
+		}
+	}
+}
+
+// TestLittleCMSPluginCodeDetectionPositive compiles a fixture holding a live
+// reference to the plugin entry and pins the positive side of the same scan,
+// so a future build that actually links plugin code stays visible.
+func TestLittleCMSPluginCodeDetectionPositive(t *testing.T) {
+	if _, err := exec.LookPath("cc"); err != nil {
+		t.Skipf("no C compiler on this host: %v", err)
+	}
+	libdirOut, err := exec.Command("pkg-config", "--variable", "libdir", "lcms2").Output()
+	if err != nil {
+		t.Skipf("no lcms2 pkg-config on this host: %v", err)
+	}
+	libdir := strings.TrimSpace(string(libdirOut))
+	archive := filepath.Join(libdir, "liblcms2_fast_float.a")
+	if _, err := os.Stat(archive); err != nil {
+		t.Skipf("no lcms2 fast-float plugin archive on this host: %v", err)
+	}
+	// A global function keeps the reference live: the linker must pull the
+	// archive member that defines the plugin registration symbol.
+	body := "extern void *cmsFastFloatExtensions(void);\n" +
+		"void *keep_lcms_plugin_reference(void) { return (void *)cmsFastFloatExtensions; }\n" +
+		"int main(void) { return 0; }\n"
+	source := filepath.Join(t.TempDir(), "fixture.c")
+	if err := os.WriteFile(source, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "fixture")
+	// The plugin member references helpers in the lcms2 core, so the fixture
+	// links the core library after the archive (Ubuntu links with
+	// --as-needed, which would otherwise drop the core before it resolves
+	// anything).
+	libsOut, err := exec.Command("pkg-config", "--libs", "lcms2").Output()
+	if err != nil {
+		t.Skipf("no lcms2 pkg-config libraries on this host: %v", err)
+	}
+	build := exec.Command("cc", source, "-o", binary, archive)
+	for _, lib := range strings.Fields(string(libsOut)) {
+		if !strings.HasPrefix(lib, "-llcms2_") {
+			build.Args = append(build.Args, lib)
+		}
+	}
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		t.Fatalf("could not build plugin fixture: %v", err)
+	}
+	names := elfSymbolNames(t, binary)
+	if !names["cmsFastFloatExtensions"] {
+		t.Fatal("plugin registration symbol invisible in a linking fixture")
 	}
 }
 
