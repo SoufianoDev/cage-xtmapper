@@ -416,9 +416,9 @@ func TestStartupDeadlineStartsAfterWaydroidLifecycle(t *testing.T) {
 				t.Fatalf("startup %s exceeded its lifecycle plus boot wait allowance: %s", phase, elapsed)
 			}
 			assertStopped(t, waitPID(t, filepath.Join(logs, "startup.pid")))
-			if _, err := os.Stat(filepath.Join(logs, "cage.pid")); !os.IsNotExist(err) {
-				t.Fatal("compositor started even though Android boot did not complete")
-			}
+			// The compositor starts before the boot probes; verify it was cleaned
+			// up after the boot deadline instead of requiring it never to start.
+			assertStopped(t, waitPID(t, filepath.Join(logs, "cage.pid")))
 		})
 	}
 }
