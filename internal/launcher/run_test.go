@@ -49,7 +49,6 @@ func TestFailureResultRecordsCauseBeforeReturning(t *testing.T) {
 	}
 }
 
-
 func TestPrepareStartupStartsBootDeadlineAfterContainerStart(t *testing.T) {
 	const bootWait = 1
 	delay := 150 * time.Millisecond
