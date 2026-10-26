@@ -9,7 +9,7 @@ func TestLittleCMSPluginLicenseRules(t *testing.T) {
 		{
 			archive:   "liblcms2_fast_float.a",
 			component: "LittleCMS-fast-float",
-			license:   "GPL-3.0-only",
+			license:   "GPL-3.0-or-later",
 			header:    "lcms2_fast_float.h",
 		},
 		{
