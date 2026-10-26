@@ -43,6 +43,12 @@ type state struct {
 	Launcher         *record       `json:"launcher"`
 }
 
+type legacyMove struct {
+	Name   string `json:"name"`
+	Backup string `json:"backup"`
+	Record record `json:"record"`
+}
+
 type transaction struct {
 	metadata
 	ID           string        `json:"id"`
@@ -55,6 +61,7 @@ type transaction struct {
 	NewRelease   *ownedRelease `json:"new_release"`
 	NextCurrent  *record       `json:"next_current"`
 	NextLauncher *record       `json:"next_launcher"`
+	LegacyMoves  []legacyMove  `json:"legacy_moves,omitempty"`
 }
 
 type manager struct {
@@ -302,7 +309,7 @@ func (m *manager) load(exclusive bool) error {
 			return err
 		}
 		if tx.InstallationID != fresh.InstallationID || !validID(tx.ID) || tx.Stage != ".stage-"+tx.ID ||
-			(tx.Operation != "install" && tx.Operation != "update" && tx.Operation != "uninstall") {
+			(tx.Operation != "install" && tx.Operation != "update" && tx.Operation != "uninstall" && tx.Operation != "legacy-migrate") {
 			return fmt.Errorf("invalid transaction or installation identity")
 		}
 		if err := validRelease(tx.OldRelease); err != nil {
@@ -311,8 +318,26 @@ func (m *manager) load(exclusive bool) error {
 		if err := validRelease(tx.NewRelease); err != nil {
 			return err
 		}
-		if (tx.Operation == "uninstall") != (tx.NewRelease == nil) {
+		noReleaseOperation := tx.Operation == "uninstall" || tx.Operation == "legacy-migrate"
+		if noReleaseOperation != (tx.NewRelease == nil) {
 			return fmt.Errorf("invalid transaction release")
+		}
+		if len(tx.LegacyMoves) > 2 || (len(tx.LegacyMoves) > 0 && tx.Operation != "install" && tx.Operation != "update" && tx.Operation != "legacy-migrate") {
+			return fmt.Errorf("invalid legacy migration plan")
+		}
+		for i, move := range tx.LegacyMoves {
+			wantName := "cage_xtmapper.sh"
+			if i == 1 {
+				wantName = "cage_xtmapper"
+			}
+			if move.Name != wantName || move.Backup != move.Name+".legacy-backup-"+tx.ID ||
+				move.Record.Mode&uint32(syscall.S_IFMT) != uint32(syscall.S_IFREG) ||
+				move.Record.UID != m.owner || !release.ValidDigest(move.Record.SHA256) {
+				return fmt.Errorf("invalid legacy migration record")
+			}
+		}
+		if tx.Operation == "legacy-migrate" && (tx.OldRelease == nil || tx.OldCurrent == nil || len(tx.LegacyMoves) == 0) {
+			return fmt.Errorf("invalid legacy migration transaction")
 		}
 		m.tx = tx
 	}

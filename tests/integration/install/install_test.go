@@ -297,6 +297,48 @@ func TestKnownLegacyShellAndBinaryMigrateAutomatically(t *testing.T) {
 	h.onlyRelease(h.id1)
 }
 
+func TestLegacyMigrationResumesAfterCrash(t *testing.T) {
+	h := newHarness(t, false)
+	h.run("install", h.v1, 0)
+
+	scriptPath := filepath.Join(h.bin, "cage_xtmapper.sh")
+	binaryPath := filepath.Join(h.bin, "cage_xtmapper")
+	legacy := []byte("#!/usr/bin/env bash\nBOOT_WAIT_SECONDS=\u0024{XTMAPPER_BOOT_WAIT_SECONDS:-120}\n# cage_xtmapper legacy launcher\n[[ \u0024BOOT_WAIT_SECONDS =~ ^[1-9][0-9]*\u0024 ]] || { echo 'XTMAPPER_BOOT_WAIT_SECONDS must be a positive integer'; exit 2; }\n")
+	writeFile(t, scriptPath, legacy, 0755)
+	testExecutable, err := os.Executable()
+	must(t, err)
+	binary, err := os.ReadFile(testExecutable)
+	must(t, err)
+	writeFile(t, binaryPath, binary, 0755)
+
+	p := h.pause("install", h.v1, "legacy-migrated")
+	must(t, p.cmd.Process.Kill())
+	h.wait(p, -1)
+	assertAbsent(t, scriptPath)
+	if _, err := os.Stat(binaryPath); err != nil {
+		t.Fatalf("binary should remain when the first rename is interrupted: %v", err)
+	}
+
+	stdout, stderr := h.run("", h.v1, 0)
+	if stderr != "" || !strings.Contains(stdout, "Status: already up to date") {
+		t.Fatalf("automatic recovery did not complete the migration: stdout=%s stderr=%s", stdout, stderr)
+	}
+	assertAbsent(t, scriptPath)
+	assertAbsent(t, binaryPath)
+
+	scriptBackups, err := filepath.Glob(scriptPath + ".legacy-backup-*")
+	must(t, err)
+	if len(scriptBackups) != 1 {
+		t.Fatalf("expected one script backup, got %v", scriptBackups)
+	}
+	suffix := strings.TrimPrefix(scriptBackups[0], scriptPath+".legacy-backup-")
+	binaryBackup := binaryPath + ".legacy-backup-" + suffix
+	if !bytes.Equal(readFile(t, scriptBackups[0]), legacy) || !bytes.Equal(readFile(t, binaryBackup), binary) {
+		t.Fatal("interrupted migration did not preserve both legacy files under the same backup ID")
+	}
+	h.onlyRelease(h.id1)
+}
+
 func TestInstallAutomaticallyUpdatesNewerRelease(t *testing.T) {
 	h := newHarness(t, false)
 	h.run("install", h.v1, 0)
