@@ -297,7 +297,6 @@ func TestNativeSourceDigestSymlinkTargets(t *testing.T) {
 	}
 }
 
-
 func TestNativeSourceDigestWithSymlinkedRepositoryPath(t *testing.T) {
 	realRepo := t.TempDir()
 	tree := filepath.Join(realRepo, "native-src/cage")
