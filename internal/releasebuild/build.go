@@ -79,7 +79,7 @@ type pluginLicenseRule struct {
 func littleCMSPluginLicenseRule(archive string) (pluginLicenseRule, bool) {
 	switch archive {
 	case "liblcms2_fast_float.a":
-		return pluginLicenseRule{component: "LittleCMS-fast-float", license: "GPL-3.0-only", header: "lcms2_fast_float.h"}, true
+		return pluginLicenseRule{component: "LittleCMS-fast-float", license: "GPL-3.0-or-later", header: "lcms2_fast_float.h"}, true
 	case "liblcms2_threaded.a":
 		return pluginLicenseRule{component: "LittleCMS-threaded", license: "GPL-3.0-or-later", header: "lcms2_threaded.h"}, true
 	default:
