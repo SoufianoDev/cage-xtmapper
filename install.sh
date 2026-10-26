@@ -127,17 +127,28 @@ else
     asset="cage-xtmapper-installer-linux-$architecture"
     repository_url="https://github.com/$repository"
     helper_release_tag=""
-    effective_url=""
+    helper_headers="$temporary/$asset.headers"
 
-    if effective_url="$(curl --fail --location --silent --show-error --retry 3 --connect-timeout 15 --max-time 300 \
-        --output "$temporary/$asset" --write-out '%{url_effective}' \
-        "$repository_url/releases/latest/download/$asset")"; then
-        if [[ "$effective_url" == "$repository_url/releases/download/"* ]]; then
-            helper_release_tag="$(printf '%s\n' "$effective_url" | sed -n 's#^.*/releases/download/\([^/][^/]*\)/[^/]*$#\1#p')"
-            if [[ ! "$helper_release_tag" =~ ^v[0-9][A-Za-z0-9._-]*$ ]]; then
-                helper_release_tag=""
+    if curl --fail --location --silent --show-error --retry 3 --connect-timeout 15 --max-time 300 \
+        --dump-header "$helper_headers" --output "$temporary/$asset" \
+        "$repository_url/releases/latest/download/$asset"; then
+        while IFS= read -r header_line || [[ -n "$header_line" ]]; do
+            header_line="${header_line%$'\r'}"
+            [[ "${header_line,,}" == location:* ]] || continue
+            location="${header_line#*:}"
+            location="${location#"${location%%[![:space:]]*}"}"
+            location="${location%%\?*}"
+            location="${location%%\#*}"
+            [[ "$location" == "$repository_url/releases/download/"* ]] || continue
+            release_asset_path="${location#"$repository_url/releases/download/"}"
+            [[ "$release_asset_path" == */* ]] || continue
+            candidate_tag="${release_asset_path%%/*}"
+            [[ "${release_asset_path#*/}" == "$asset" ]] || continue
+            if [[ "$candidate_tag" =~ ^v[0-9][A-Za-z0-9._-]*$ ]]; then
+                helper_release_tag="$candidate_tag"
+                break
             fi
-        fi
+        done < "$helper_headers"
     fi
 
     if [[ -n "$helper_release_tag" ]]; then
