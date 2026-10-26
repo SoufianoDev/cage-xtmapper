@@ -258,7 +258,7 @@ func (m *manager) migrateLegacyMoves(tx *transaction) error {
 			if _, err := checkRecord(source, &move.Record, false); err != nil {
 				return err
 			}
-			if err := os.Rename(source, backup); err != nil {
+			if err := renameNew(source, backup); err != nil {
 				return fmt.Errorf("could not preserve legacy file %s: %w", source, err)
 			}
 			if err := syncDir(m.bin); err != nil {

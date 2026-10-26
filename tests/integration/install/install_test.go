@@ -3,6 +3,7 @@ package install_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -295,6 +296,45 @@ func TestKnownLegacyShellAndBinaryMigrateAutomatically(t *testing.T) {
 		t.Fatalf("legacy pair was not preserved: script=%t binary=%t", foundScript, foundBinary)
 	}
 	h.onlyRelease(h.id1)
+}
+
+func TestLegacyMigrationNeverOverwritesExistingBackup(t *testing.T) {
+	h := newHarness(t, false)
+	scriptPath := filepath.Join(h.bin, "cage_xtmapper.sh")
+	legacy := []byte("#!/usr/bin/env bash\nBOOT_WAIT_SECONDS=\u0024{XTMAPPER_BOOT_WAIT_SECONDS:-120}\n# cage_xtmapper legacy launcher\n[[ \u0024BOOT_WAIT_SECONDS =~ ^[1-9][0-9]*\u0024 ]] || { echo 'XTMAPPER_BOOT_WAIT_SECONDS must be a positive integer'; exit 2; }\n")
+	writeFile(t, scriptPath, legacy, 0755)
+
+	p := h.pause("install", h.v1, "cleanup")
+	var tx struct {
+		ID string `json:"id"`
+	}
+	must(t, json.Unmarshal(readFile(t, filepath.Join(h.root, "transaction.json")), &tx))
+	if tx.ID == "" {
+		t.Fatal("transaction has no ID")
+	}
+	backup := scriptPath + ".legacy-backup-" + tx.ID
+	userData := []byte("pre-existing user backup\n")
+	writeFile(t, backup, userData, 0644)
+
+	must(t, p.cmd.Process.Signal(syscall.SIGCONT))
+	h.wait(p, 4)
+	if !bytes.Equal(readFile(t, scriptPath), legacy) || !bytes.Equal(readFile(t, backup), userData) {
+		t.Fatal("migration overwrote an existing backup or changed the legacy source")
+	}
+	if h.active() != "releases/"+h.id1 {
+		t.Fatal("a backup collision changed the active release")
+	}
+	stat(t, filepath.Join(h.root, "transaction.json"))
+
+	must(t, os.Remove(backup))
+	stdout, stderr := h.run("", h.v1, 0)
+	if stderr != "" || !strings.Contains(stdout, "Status: already up to date") {
+		t.Fatalf("migration did not resume after removing the conflict: stdout=%s stderr=%s", stdout, stderr)
+	}
+	if !bytes.Equal(readFile(t, scriptPath+".legacy-backup-"+tx.ID), legacy) {
+		t.Fatal("resumed migration did not preserve the original legacy file")
+	}
+	h.onlyRelease(t, h.id1)
 }
 
 func TestLegacyMigrationResumesAfterCrash(t *testing.T) {
