@@ -307,7 +307,6 @@ func TestInstallAutomaticallyUpdatesNewerRelease(t *testing.T) {
 	h.onlyRelease(h.id2)
 }
 
-
 // TestAutomaticModeRecoversInterruptedTransactions verifies that the ordinary
 // no-operation entry point repairs a recorded transaction and then converges
 // to the selected release without requiring an explicit recover command.
