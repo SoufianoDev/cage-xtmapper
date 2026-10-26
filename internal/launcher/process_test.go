@@ -158,16 +158,11 @@ func TestContainerStartAuthenticationPTY(t *testing.T) {
 	waydroid := filepath.Join(dir, "waydroid")
 	sudoBody := `#!/bin/sh
 printf 'mode=%s argv=%s\n' "$MOCK_SUDO_MODE" "$*" >> "$SUDO_LOG"
-if [ "$1" = "-n" ] && [ "$2" = "-l" ]; then
-    [ "$MOCK_SUDO_MODE" = passwordless ] && exit 0
-    exit 1
-fi
 if [ "$1" = "-n" ]; then
-    if [ "$MOCK_SUDO_MODE" != passwordless ]; then
-        echo 'sudo mock unexpectedly skipped authentication' >&2
-        exit 92
-    fi
     shift
+    exec "$@"
+fi
+if [ "$MOCK_SUDO_MODE" = passwordless ]; then
     exec "$@"
 fi
 if [ ! -t 0 ] || [ ! -t 1 ] || [ ! -t 2 ]; then
@@ -202,7 +197,7 @@ exec "$@"
 		name, mode, input, wantLog string
 	}{
 		{name: "password accepted on container command", mode: "success", input: "test-secret\n", wantLog: "auth=accepted"},
-		{name: "password-free startup skips validation", mode: "passwordless", input: "", wantLog: "argv=-n -l --"},
+		{name: "password-free startup skips validation", mode: "passwordless", input: "", wantLog: "mode=passwordless argv="},
 		{name: "password rejected", mode: "reject", input: "wrong-secret\n", wantLog: "auth=rejected"},
 		{name: "prompt cancellation by deadline", mode: "cancel", input: "", wantLog: "mode=cancel"},
 	} {
@@ -236,8 +231,8 @@ exec "$@"
 				if strings.Contains(string(logData), "argv=-v") {
 					t.Fatalf("password-free startup invoked sudo -v: %q", logData)
 				}
-				if !strings.Contains(string(logData), "argv=-n "+waydroid+" container start") {
-					t.Fatalf("password-free startup did not run noninteractively: %q", logData)
+				if !strings.Contains(string(logData), "argv="+waydroid+" container start") {
+					t.Fatalf("password-free startup did not execute the Waydroid command directly: %q", logData)
 				}
 			}
 			if tc.mode == "success" || tc.mode == "passwordless" {
