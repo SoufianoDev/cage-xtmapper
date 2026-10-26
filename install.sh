@@ -6,16 +6,18 @@ repository="${XTMAPPER_INSTALL_REPO:-$DEFAULT_REPOSITORY}"
 requested_version="${XTMAPPER_INSTALL_VERSION:-}"
 installer_override="${XTMAPPER_INSTALLER_BIN:-}"
 archive_override=""
-operation=install
+# With no explicit operation, inspect the installation and act automatically.
+operation=auto
 test_prefix_requested=false
 archive_seen=false
 
 usage() {
     cat <<'EOF'
-Usage: install.sh [install|update|status|recover|uninstall] [options]
+Usage: install.sh [auto|install|update|status|recover|uninstall] [options]
 
-No operation defaults to install. Running install again updates an existing
-managed installation, and an identical release is a successful no-op.
+No operation defaults to auto: install if absent, update if stale, report when
+already current, and recover a recorded incomplete transaction when possible.
+Explicit operations remain available for diagnostics and maintenance.
 
 Options:
   --version TAG       Select a published release tag instead of the latest stable release.
@@ -31,7 +33,7 @@ EOF
 
 if (($#)); then
     case "$1" in
-        install|update|status|recover|uninstall) operation="$1"; shift ;;
+        auto|install|update|status|recover|uninstall) operation="$1"; shift ;;
         -h|--help) usage; exit 0 ;;
         *) printf 'install.sh: unknown operation: %s\n' "$1" >&2; usage >&2; exit 2 ;;
     esac
@@ -83,16 +85,16 @@ if [[ -n "$requested_version" && ! "$requested_version" =~ ^v[0-9][A-Za-z0-9._-]
     echo 'install.sh: invalid release tag; expected a tag beginning with v' >&2
     exit 2
 fi
-if [[ -n "$requested_version" && "$operation" != install && "$operation" != update ]]; then
-    echo 'install.sh: --version is valid only with install or update' >&2
+if [[ -n "$requested_version" && "$operation" != auto && "$operation" != install && "$operation" != update ]]; then
+    echo 'install.sh: --version is valid only with automatic mode, install, or update' >&2
     exit 2
 fi
 if [[ -n "$requested_version" && "$archive_seen" == true ]]; then
     echo 'install.sh: do not combine --version with a local --archive' >&2
     exit 2
 fi
-if [[ "$archive_seen" == true && "$operation" != install && "$operation" != update ]]; then
-    echo 'install.sh: --archive is valid only with install or update' >&2
+if [[ "$archive_seen" == true && "$operation" != auto && "$operation" != install && "$operation" != update ]]; then
+    echo 'install.sh: --archive is valid only with automatic mode, install, or update' >&2
     exit 2
 fi
 if [[ "$archive_seen" == true && ! -f "$archive_override" ]]; then
@@ -155,7 +157,7 @@ else
     chmod 0755 "$temporary/$asset"
     installer="$temporary/$asset"
 
-    if [[ "$operation" == install || "$operation" == update ]] && [[ "$archive_seen" == false ]]; then
+    if [[ "$operation" == auto || "$operation" == install || "$operation" == update ]] && [[ "$archive_seen" == false ]]; then
         archive_tag="\${requested_version:-$helper_release_tag}"
         archive_url="$repository_url/releases/download/$archive_tag"
         archive_name="cage-xtmapper-$archive_tag-$architecture.tar"
@@ -168,7 +170,7 @@ else
     fi
 fi
 
-if [[ "$operation" == install || "$operation" == update ]] && [[ "$archive_seen" == false && -n "$installer_override" ]]; then
+if [[ "$operation" == auto || "$operation" == install || "$operation" == update ]] && [[ "$archive_seen" == false && -n "$installer_override" ]]; then
     if [[ -z "$requested_version" ]]; then
         echo 'install.sh: with XTMAPPER_INSTALLER_BIN, provide --archive or --version' >&2
         exit 2

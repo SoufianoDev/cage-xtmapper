@@ -744,6 +744,56 @@ func (m *manager) recoverScaffolding(stage string, r *ownedRelease) error {
 	return m.saveTx()
 }
 
+// auto resolves a recorded interrupted transaction before converging the install
+// to the supplied release. Unknown or modified state is never force-cleaned.
+func (m *manager) auto(archive string) error {
+	operation := "install"
+
+	if !exists(m.root) {
+		candidates, err := m.bootstrapCandidates()
+		if err != nil {
+			return err
+		}
+		if len(candidates) != 0 {
+			if err := m.recover(); err != nil {
+				return fmt.Errorf("automatic recovery failed: %w", err)
+			}
+			if m.state != nil && m.state.Release != nil {
+				operation = "update"
+			}
+			if m.lock != nil {
+				if err := m.lock.Close(); err != nil {
+					return err
+				}
+				m.lock = nil
+			}
+			return m.change(operation, archive)
+		}
+		return m.change(operation, archive)
+	}
+
+	if err := m.load(true); err != nil {
+		return err
+	}
+	if m.tx != nil {
+		if err := m.finish(); err != nil {
+			return fmt.Errorf("automatic recovery failed: %w", err)
+		}
+	} else if err := m.active(); err != nil {
+		return err
+	}
+	if m.state != nil && m.state.Release != nil {
+		operation = "update"
+	}
+	if m.lock != nil {
+		if err := m.lock.Close(); err != nil {
+			return err
+		}
+		m.lock = nil
+	}
+	return m.change(operation, archive)
+}
+
 func (m *manager) change(operation, archive string) error {
 	if err := m.legacyConflicts(); err != nil {
 		return err
@@ -789,7 +839,11 @@ func (m *manager) change(operation, archive string) error {
 		}
 		if m.state.Release != nil && m.state.Release.ID == manifest.ReleaseID {
 			if sameReleaseFiles(m.state.Release, files) {
-				return m.migrateLegacyShell()
+				if err := m.migrateLegacyShell(); err != nil {
+					return err
+				}
+				m.upToDate = true
+				return nil
 			}
 			return fmt.Errorf("release ID is already active but archive content differs; refusing replacement")
 		}

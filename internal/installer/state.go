@@ -65,6 +65,7 @@ type manager struct {
 	tx                      *transaction
 	removed                 []string
 	migrated                []string
+	upToDate                bool
 }
 
 func newManager(prefix string) (*manager, error) {
