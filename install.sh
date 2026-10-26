@@ -202,12 +202,15 @@ if [[ "$operation" != status ]]; then
     printf '\n'
 fi
 if [[ -n "$downloaded_archive" ]]; then
-    exec {archive_fd}< "$temporary/$downloaded_archive"
-    forward_args+=(--archive "/proc/self/fd/$archive_fd")
+    forward_args+=(--archive "$temporary/$downloaded_archive")
+    # ReadArchive opens with O_NOFOLLOW, so keep the real path available until
+    # the helper exits, then let the EXIT trap remove the downloaded assets.
+    "$installer" "$operation" "${forward_args[@]}"
+    exit
 fi
 exec {installer_fd}< "$installer"
-# Exec the unlinked inodes to preserve exit statuses/signals and the same pid;
-# a forked child would keep bash's cleanup trap racing files the helper reads.
+# Without a downloaded archive, exec the unlinked helper to preserve exit
+# statuses/signals and the same pid, including the test checkpoint contract.
 rm -rf -- "$temporary"
 trap - EXIT
 exec "/proc/self/fd/$installer_fd" "$operation" "${forward_args[@]}"
