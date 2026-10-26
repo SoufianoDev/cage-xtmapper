@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -28,6 +29,7 @@ type transport struct {
 const (
 	waydroidStopTimeout   = 30 * time.Second
 	containerStartTimeout = 120 * time.Second
+	sudoAuthCheckTimeout  = 5 * time.Second
 	getpropProbeTimeout   = 5 * time.Second
 	abiProbeTimeout       = 10 * time.Second
 	apkProbeTimeout       = 10 * time.Second
@@ -55,19 +57,33 @@ func waydroidTransport(cfg *Config) transport {
 		},
 		startContainer: func(ctx context.Context) error {
 			if terminalForeground() {
-				// Authenticate while this process still owns the foreground terminal
-				// group. The actual container start then runs under sudo -n in a
-				// dedicated process group so cancellation also reaches its children.
-				auth := exec.Command(sudo, "-v")
-				code, err := runInheritForeground(ctx, auth, containerStartTimeout)
+				// Check this exact command without prompting first. NOPASSWD rules
+				// (or existing valid credentials) can start the container directly.
+				// Otherwise, let this Waydroid command prompt in an isolated process
+				// group that temporarily owns the terminal foreground.
+				check := exec.Command(sudo, "-n", "-l", "--", waydroid, "container", "start")
+				code, err := runBounded(ctx, check, sudoAuthCheckTimeout)
 				if err != nil {
-					return fmt.Errorf("could not authenticate sudo for Waydroid container start: %w", err)
+					return fmt.Errorf("could not check passwordless sudo access for Waydroid container start: %w", err)
 				}
 				if code != 0 {
-					return errChildExit("could not authenticate sudo for Waydroid container start", code)
+					cmd := exec.Command(sudo, waydroid, "container", "start")
+					code, err = runInheritTerminalForeground(ctx, cmd, containerStartTimeout)
+					if err != nil {
+						return fmt.Errorf("could not start the Waydroid container: %w", err)
+					}
+					if code == 128+int(syscall.SIGINT) {
+						return fmt.Errorf("Waydroid container start was interrupted: %w", ErrForegroundInterrupted)
+					}
+					if code != 0 {
+						return errChildExit("could not start the Waydroid container", code)
+					}
+					return nil
 				}
 			}
 
+			// Keep probes and non-terminal launches noninteractive. The common
+			// password-free foreground path avoids an unnecessary sudo -v call.
 			cmd := runNonInteractive([]string{"container", "start"})
 			code, err := runInherit(ctx, cmd, containerStartTimeout)
 			if err != nil {

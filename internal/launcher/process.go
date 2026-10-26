@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"sync"
 	"syscall"
 	"time"
@@ -25,6 +26,7 @@ var terminalForeground = func() bool {
 }
 
 var ErrTimedOut = errors.New("timed out")
+var ErrForegroundInterrupted = errors.New("foreground command interrupted")
 
 const (
 	cleanupTermGrace = 5 * time.Second
@@ -190,6 +192,75 @@ func runInherit(ctx context.Context, cmd *exec.Cmd, timeout time.Duration) (int,
 func runInheritForeground(ctx context.Context, cmd *exec.Cmd, timeout time.Duration) (int, error) {
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return runBoundedForeground(ctx, cmd, timeout)
+}
+
+
+func setTerminalForegroundGroup(tty *os.File, pgid int) error {
+	// Restoring the launcher's group happens while its process group is in the
+	// background, so temporarily ignore SIGTTOU around the terminal ioctl.
+	if !terminalForeground() {
+		signal.Ignore(syscall.SIGTTOU)
+		defer signal.Reset(syscall.SIGTTOU)
+	}
+	foreground := int32(pgid)
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, tty.Fd(), syscall.TIOCSPGRP, uintptr(unsafe.Pointer(&foreground)))
+	if errno != 0 {
+		return errno
+	}
+	return nil
+}
+
+// runInheritTerminalForeground gives an isolated child process group terminal
+// foreground ownership while it runs. This permits sudo to prompt on the
+// Waydroid command itself without exposing the launcher's process group to cleanup.
+func runInheritTerminalForeground(ctx context.Context, cmd *exec.Cmd, timeout time.Duration) (int, error) {
+	if timeout <= 0 {
+		return -1, ErrTimedOut
+	}
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return -1, fmt.Errorf("could not open the controlling terminal: %w", err)
+	}
+	defer tty.Close()
+
+	launcherGroup := syscall.Getpgrp()
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	c, err := startGroup(ctx, cmd)
+	if err != nil {
+		return -1, err
+	}
+	defer func() {
+		c.finish()
+		if err := setTerminalForegroundGroup(tty, launcherGroup); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not restore terminal foreground process group: %v\n", err)
+		}
+	}()
+
+	if c.exited() {
+		return c.code, nil
+	}
+	if err := setTerminalForegroundGroup(tty, cmd.Process.Pid); err != nil {
+		if c.exited() {
+			return c.code, nil
+		}
+		return -1, fmt.Errorf("could not assign the terminal to the Waydroid command: %w", err)
+	}
+	// A background child may have stopped with SIGTTIN before the terminal
+	// handoff completed. Resume the isolated group after it becomes foreground.
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGCONT)
+
+	select {
+	case <-c.dead:
+		return c.code, nil
+	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return -1, ErrTimedOut
+		}
+		return -1, ctx.Err()
+	}
 }
 
 func runCapture(ctx context.Context, cmd *exec.Cmd, timeout time.Duration) (string, error) {

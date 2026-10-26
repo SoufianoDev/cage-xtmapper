@@ -123,7 +123,7 @@ func TestContainerStartAuthenticationPTY(t *testing.T) {
 		err := waydroidTransport(&Config{Tools: Tools{Sudo: sudo, Waydroid: waydroid}}).startContainer(ctx)
 		cancel()
 		switch mode {
-		case "success":
+		case "success", "passwordless":
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
@@ -153,44 +153,42 @@ func TestContainerStartAuthenticationPTY(t *testing.T) {
 
 	dir := t.TempDir()
 	sudoLog := filepath.Join(dir, "sudo.log")
-	sudoCached := filepath.Join(dir, "sudo.cached")
 	waydroidLog := filepath.Join(dir, "waydroid.log")
 	sudo := filepath.Join(dir, "sudo")
 	waydroid := filepath.Join(dir, "waydroid")
 	sudoBody := `#!/bin/sh
 printf 'mode=%s argv=%s\n' "$MOCK_SUDO_MODE" "$*" >> "$SUDO_LOG"
-if [ "$1" = "-v" ]; then
-    if [ ! -t 0 ] || [ ! -t 1 ] || [ ! -t 2 ]; then
-        echo 'sudo mock did not inherit a terminal' >&2
-        exit 90
-    fi
-    old_stty=$(stty -g </dev/tty) || exit 93
-    stty -echo </dev/tty
-    printf 'Password: ' >/dev/tty
-    if [ "$MOCK_SUDO_MODE" = cancel ]; then
-        exec sleep 600
-    fi
-    IFS= read -r password </dev/tty || exit 91
-    stty "$old_stty" </dev/tty
-    printf '\n' >/dev/tty
-    if [ "$password" != "$MOCK_PASSWORD" ]; then
-        echo 'auth=rejected' >> "$SUDO_LOG"
-        exit 92
-    fi
-    echo 'auth=accepted' >> "$SUDO_LOG"
-    : > "$SUDO_CACHED"
-    exit 0
+if [ "$1" = "-n" ] && [ "$2" = "-l" ]; then
+    [ "$MOCK_SUDO_MODE" = passwordless ] && exit 0
+    exit 1
 fi
 if [ "$1" = "-n" ]; then
-    if [ ! -f "$SUDO_CACHED" ]; then
-        echo 'sudo mock has no cached credentials' >&2
+    if [ "$MOCK_SUDO_MODE" != passwordless ]; then
+        echo 'sudo mock unexpectedly skipped authentication' >&2
         exit 92
     fi
     shift
     exec "$@"
 fi
-echo 'unexpected sudo arguments' >&2
-exit 94
+if [ ! -t 0 ] || [ ! -t 1 ] || [ ! -t 2 ]; then
+    echo 'sudo mock did not inherit a terminal' >&2
+    exit 90
+fi
+old_stty=$(stty -g </dev/tty) || exit 93
+stty -echo </dev/tty
+printf 'Password: ' >/dev/tty
+if [ "$MOCK_SUDO_MODE" = cancel ]; then
+    exec sleep 600
+fi
+IFS= read -r password </dev/tty || exit 91
+stty "$old_stty" </dev/tty
+printf '\n' >/dev/tty
+if [ "$password" != "$MOCK_PASSWORD" ]; then
+    echo 'auth=rejected' >> "$SUDO_LOG"
+    exit 92
+fi
+echo 'auth=accepted' >> "$SUDO_LOG"
+exec "$@"
 `
 	if err := os.WriteFile(sudo, []byte(sudoBody), 0o755); err != nil {
 		t.Fatal(err)
@@ -203,7 +201,8 @@ exit 94
 	for _, tc := range []struct {
 		name, mode, input, wantLog string
 	}{
-		{name: "password accepted", mode: "success", input: "test-secret\n", wantLog: "auth=accepted"},
+		{name: "password accepted on container command", mode: "success", input: "test-secret\n", wantLog: "auth=accepted"},
+		{name: "password-free startup skips validation", mode: "passwordless", input: "", wantLog: "argv=-n -l --"},
 		{name: "password rejected", mode: "reject", input: "wrong-secret\n", wantLog: "auth=rejected"},
 		{name: "prompt cancellation by deadline", mode: "cancel", input: "", wantLog: "mode=cancel"},
 	} {
@@ -219,7 +218,6 @@ exit 94
 				"XTMAPPER_PTY_WAYDROID="+waydroid,
 				"MOCK_SUDO_MODE="+tc.mode,
 				"MOCK_PASSWORD=test-secret",
-				"SUDO_CACHED="+sudoCached,
 				"SUDO_LOG="+sudoLog,
 				"WAYDROID_LOG="+waydroidLog,
 			)
@@ -234,13 +232,21 @@ exit 94
 			if !strings.Contains(string(logData), tc.wantLog) {
 				t.Fatalf("sudo mock log %q does not contain %q; output: %s", logData, tc.wantLog, output)
 			}
-			if tc.mode == "success" {
+			if tc.mode == "passwordless" {
+				if strings.Contains(string(logData), "argv=-v") {
+					t.Fatalf("password-free startup invoked sudo -v: %q", logData)
+				}
+				if !strings.Contains(string(logData), "argv=-n "+waydroid+" container start") {
+					t.Fatalf("password-free startup did not run noninteractively: %q", logData)
+				}
+			}
+			if tc.mode == "success" || tc.mode == "passwordless" {
 				data, err := os.ReadFile(waydroidLog)
 				if err != nil {
 					t.Fatal(err)
 				}
 				if strings.TrimSpace(string(data)) != "container start" {
-					t.Fatalf("waydroid was not started after authentication: %q", data)
+					t.Fatalf("waydroid was not started after authorization: %q", data)
 				}
 			} else if _, err := os.Stat(waydroidLog); !os.IsNotExist(err) {
 				t.Fatalf("Waydroid ran despite failed/cancelled authentication: %v", err)

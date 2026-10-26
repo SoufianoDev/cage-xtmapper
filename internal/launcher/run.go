@@ -158,7 +158,11 @@ func run(ctx context.Context, cfg Config) int {
 
 	startupDeadline, err := prepareStartup(ctx, t, bootWait)
 	if err != nil {
-		code := failureResult(ctx, 1)
+		code := 1
+		if errors.Is(err, ErrForegroundInterrupted) {
+			code = 130
+		}
+		code = failureResult(ctx, code)
 		reportError(err)
 		return code
 	}
