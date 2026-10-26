@@ -35,11 +35,11 @@ func TestDownloadedArchive(t *testing.T) {
 			writeAsset("cage-xtmapper-installer-linux-"+runtime.GOARCH, readFile(t, h.installer))
 			writeFile(t, filepath.Join(mockBin, "curl"), []byte(`#!/usr/bin/env bash
 set -euo pipefail
-output= url= effective=false
+output= headers= url=
 while (($#)); do
     case "$1" in
         --output) output="$2"; shift 2 ;;
-        --write-out) effective=true; shift 2 ;;
+        --dump-header) headers="$2"; shift 2 ;;
         --retry|--connect-timeout|--max-time) shift 2 ;;
         --fail|--location|--silent|--show-error) shift ;;
         https://github.com/fixture/repo/releases/*) url="$1"; shift ;;
@@ -47,8 +47,8 @@ while (($#)); do
     esac
 done
 cp -- "$DOWNLOAD_FIXTURES/${url##*/}" "$output"
-if [[ "$effective" == true ]]; then
-    printf 'https://github.com/fixture/repo/releases/download/v1/%s' "${url##*/}"
+if [[ -n "$headers" ]]; then
+    printf 'HTTP/2 302\r\nLocation: https://github.com/fixture/repo/releases/download/v1/%s\r\n\r\nHTTP/2 302\r\nLocation: https://release-assets.githubusercontent.com/assets/%s\r\n\r\nHTTP/2 200\r\n\r\n' "${url##*/}" "${url##*/}" > "$headers"
 fi
 `), 0755)
 			t.Setenv("PATH", mockBin+":"+os.Getenv("PATH"))
