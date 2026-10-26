@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -36,8 +37,8 @@ const (
 func waydroidTransport(cfg *Config) transport {
 	sudo := cfg.Tools.Sudo
 	waydroid := cfg.Tools.Waydroid
-	run := func(args []string) *exec.Cmd {
-		argv := append([]string{sudo, waydroid}, args...)
+	runNonInteractive := func(args []string) *exec.Cmd {
+		argv := append([]string{sudo, "-n", waydroid}, args...)
 		return exec.Command(argv[0], argv[1:]...)
 	}
 	return transport{
@@ -54,7 +55,28 @@ func waydroidTransport(cfg *Config) transport {
 			return nil
 		},
 		startContainer: func(ctx context.Context) error {
-			code, err := runInherit(ctx, run([]string{"container", "start"}), containerStartTimeout)
+			if terminalForeground() {
+				// Run the actual command as sudo: command-specific NOPASSWD rules
+				// work without sudo -v, while sudo prompts here when authentication
+				// is needed. Its isolated process group owns the terminal while active.
+				cmd := exec.Command(sudo, waydroid, "container", "start")
+				code, err := runInheritTerminalForeground(ctx, cmd, containerStartTimeout)
+				if err != nil {
+					return fmt.Errorf("could not start the Waydroid container: %w", err)
+				}
+				if code == 128+int(syscall.SIGINT) {
+					return fmt.Errorf("Waydroid container start was interrupted: %w", ErrForegroundInterrupted)
+				}
+				if code != 0 {
+					return errChildExit("could not start the Waydroid container", code)
+				}
+				return nil
+			}
+
+			// Keep other launches noninteractive. sudo -n fails promptly instead
+			// of opening an unusable prompt when no foreground terminal is present.
+			cmd := runNonInteractive([]string{"container", "start"})
+			code, err := runInherit(ctx, cmd, containerStartTimeout)
 			if err != nil {
 				return fmt.Errorf("could not start the Waydroid container: %w", err)
 			}
@@ -64,10 +86,10 @@ func waydroidTransport(cfg *Config) transport {
 			return nil
 		},
 		probeCmd: func(verb string, args ...string) *exec.Cmd {
-			return run(append([]string{"shell", verb}, args...))
+			return runNonInteractive(append([]string{"shell", verb}, args...))
 		},
 		remoteShellCmd: func(cmd string) *exec.Cmd {
-			return run([]string{"shell", "--", "sh", "-c", cmd})
+			return runNonInteractive([]string{"shell", "--", "sh", "-c", cmd})
 		},
 	}
 }
@@ -99,7 +121,11 @@ func (t transport) getprop(ctx context.Context, name string, timeout time.Durati
 // packagePathProbe returns the first `package:<path>` line of a
 // `pm path` probe ("" when absent).
 func (t transport) packagePathProbe(ctx context.Context, pkg string) (string, error) {
-	out, err := runCapture(ctx, t.probeCmd("pm", "path", pkg), apkProbeTimeout)
+	return t.packagePathProbeWithTimeout(ctx, pkg, apkProbeTimeout)
+}
+
+func (t transport) packagePathProbeWithTimeout(ctx context.Context, pkg string, timeout time.Duration) (string, error) {
+	out, err := runCapture(ctx, t.probeCmd("pm", "path", pkg), timeout)
 	if err != nil {
 		return "", err
 	}

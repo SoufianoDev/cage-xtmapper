@@ -29,7 +29,7 @@ var nativeTrees = map[string]string{
 // symlinks. Only executable bits of the mode are recorded so umask and
 // ownership cannot change the result; other file types are rejected.
 func collectInventory(repo string, roots []string) ([]string, error) {
-	record := func(path string) (string, error) {
+	record := func(path, scopeRoot string) (string, error) {
 		info, err := os.Lstat(path)
 		if err != nil {
 			return "", err
@@ -44,6 +44,29 @@ func collectInventory(repo string, roots []string) ([]string, error) {
 			target, err := os.Readlink(path)
 			if err != nil {
 				return "", err
+			}
+			resolved, err := filepath.EvalSymlinks(path)
+			if err != nil {
+				return "", fmt.Errorf("cannot resolve source symlink %s: %w", relative, err)
+			}
+			scopeResolved, err := filepath.EvalSymlinks(scopeRoot)
+			if err != nil {
+				return "", fmt.Errorf("cannot resolve source tree %s: %w", relative, err)
+			}
+			scopeAbs, err := filepath.Abs(scopeResolved)
+			if err != nil {
+				return "", err
+			}
+			targetAbs, err := filepath.Abs(resolved)
+			if err != nil {
+				return "", err
+			}
+			within, err := filepath.Rel(scopeAbs, targetAbs)
+			if err != nil {
+				return "", err
+			}
+			if within == ".." || strings.HasPrefix(within, ".."+string(filepath.Separator)) {
+				return "", fmt.Errorf("source symlink escapes inventoried tree: %s -> %s", relative, target)
 			}
 			return relative + "\x00l\x00" + target, nil
 		case info.Mode().IsRegular():
@@ -69,7 +92,7 @@ func collectInventory(repo string, roots []string) ([]string, error) {
 			return nil, err
 		}
 		if !info.IsDir() {
-			recorded, err := record(full)
+			recorded, err := record(full, filepath.Dir(full))
 			if err != nil {
 				return nil, err
 			}
@@ -80,7 +103,7 @@ func collectInventory(repo string, roots []string) ([]string, error) {
 			if err != nil || entry.IsDir() {
 				return err
 			}
-			recorded, err := record(path)
+			recorded, err := record(path, full)
 			if err != nil {
 				return err
 			}

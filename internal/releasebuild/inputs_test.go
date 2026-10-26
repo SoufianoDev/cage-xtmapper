@@ -251,3 +251,66 @@ func TestVerifyFresh(t *testing.T) {
 		t.Fatalf("expected schema error, got %v", err)
 	}
 }
+
+func TestNativeSourceDigestRejectsEscapingSymlink(t *testing.T) {
+	repo := t.TempDir()
+	tree := filepath.Join(repo, "native-src/cage")
+	if err := os.MkdirAll(tree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(repo, "native-src/outside.c")
+	if err := os.WriteFile(outside, []byte("external input"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../outside.c", filepath.Join(tree, "external.c")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NativeSourceDigest(repo, "native-src/cage"); err == nil ||
+		!strings.Contains(err.Error(), "escapes inventoried tree") {
+		t.Fatalf("expected escaping source symlink to be rejected, got %v", err)
+	}
+}
+
+func TestNativeSourceDigestSymlinkTargets(t *testing.T) {
+	repo := t.TempDir()
+	tree := filepath.Join(repo, "native-src/cage")
+	writeTree(t, tree, map[string]string{"target.c": "one"})
+	link := filepath.Join(tree, "link.c")
+	if err := os.Symlink("target.c", link); err != nil {
+		t.Fatal(err)
+	}
+	first, err := NativeSourceDigest(repo, "native-src/cage")
+	if err != nil {
+		t.Fatalf("internal symlink rejected: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tree, "target.c"), []byte("two"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := NativeSourceDigest(repo, "native-src/cage"); err != nil || changed == first {
+		t.Fatalf("symlink target change not tracked: %v", err)
+	}
+	if err := os.Remove(filepath.Join(tree, "target.c")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NativeSourceDigest(repo, "native-src/cage"); err == nil {
+		t.Fatal("missing symlink target accepted")
+	}
+}
+
+func TestNativeSourceDigestWithSymlinkedRepositoryPath(t *testing.T) {
+	realRepo := t.TempDir()
+	tree := filepath.Join(realRepo, "native-src/cage")
+	writeTree(t, tree, map[string]string{"target.c": "inside"})
+	if err := os.Symlink("target.c", filepath.Join(tree, "link.c")); err != nil {
+		t.Fatal(err)
+	}
+
+	linkParent := t.TempDir()
+	repoLink := filepath.Join(linkParent, "repo")
+	if err := os.Symlink(realRepo, repoLink); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NativeSourceDigest(repoLink, "native-src/cage"); err != nil {
+		t.Fatalf("valid in-tree symlink rejected through symlinked repo path: %v", err)
+	}
+}

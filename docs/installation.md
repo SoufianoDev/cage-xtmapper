@@ -56,6 +56,8 @@ System mutations require root. A runtime or another administrative process holdi
 
 Errors go to stderr. Status uses JSON on stdout; mutating commands report the active release, removals, and intentionally preserved paths. The installer never executes the release ELF to validate it.
 
+Repeating a command in a state it does not apply to is a deliberate refusal, not a no-op: `install` with an active managed release, `update` whose archive has the release id that is already active, and `uninstall` without an installed release all fail with exit status 1 and change nothing. A refused operation stages no release, replaces no link, state record, ownership inventory, or lock, and writes no transaction journal. Identical archives are never re-staged over an existing release id; to redeploy the same version, uninstall first or publish it under a new release id. Refusals keep conflicting or modified files protected; inspect them with `status` and resolve them explicitly.
+
 ## Ownership And Legacy Files
 
 `state.json` identifies the installation, expected paths and owner, directory identities, stable lock inode, active release's file inventory, and launcher/current symlink identities and targets. Inventories include device/inode, owner, mode, and file digest. Each atomic metadata file records its own inode identity. The journal records the objects created or reserved by its transaction.

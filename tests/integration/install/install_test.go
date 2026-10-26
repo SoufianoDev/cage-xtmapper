@@ -187,6 +187,57 @@ func TestAtomicActivation(t *testing.T) {
 	}
 }
 
+// TestRepeatedOperationsRefuseWithStateIntact pins the documented strict
+// command-state contract: repeating a command in a state it does not apply
+// to is a safe refusal (exit 1), not a silent no-op, and must leave the
+// active link, release set, state record, and journal handling untouched.
+func TestRepeatedOperationsRefuseWithStateIntact(t *testing.T) {
+	h := newHarness(t, false)
+	h.run("install", h.v1, 0)
+	stateBefore := readFile(t, filepath.Join(h.root, "state.json"))
+	lock := stat(t, filepath.Join(h.root, ".install.lock"))
+
+	// install against an active installation is refused without restaging.
+	_, stderr := h.run("install", h.v1, 1)
+	if !strings.Contains(stderr, "invalid install for the current installation state") {
+		t.Fatal(stderr)
+	}
+	if h.active() != "releases/"+h.id1 || !bytes.Equal(readFile(t, filepath.Join(h.root, "state.json")), stateBefore) {
+		t.Fatal("refused install modified the installation")
+	}
+	h.onlyRelease(h.id1)
+
+	// update with the already-installed release is refused without adoption
+	// or replacement, and writes no transaction journal.
+	_, stderr = h.run("update", h.v1, 1)
+	if !strings.Contains(stderr, "release destination already exists") {
+		t.Fatal(stderr)
+	}
+	if h.active() != "releases/"+h.id1 || !bytes.Equal(readFile(t, filepath.Join(h.root, "state.json")), stateBefore) {
+		t.Fatal("refused update modified the installation")
+	}
+	h.onlyRelease(h.id1)
+	if !os.SameFile(lock, stat(t, filepath.Join(h.root, ".install.lock"))) {
+		t.Fatal("refused operations replaced the install lock")
+	}
+
+	// uninstall removes the installation; a second uninstall is refused and
+	// preserves the completed removal.
+	h.run("uninstall", "", 0)
+	stateUninstalled := readFile(t, filepath.Join(h.root, "state.json"))
+	_, stderr = h.run("uninstall", "", 1)
+	if !strings.Contains(stderr, "no installed release to uninstall") {
+		t.Fatal(stderr)
+	}
+	assertAbsent(t, filepath.Join(h.bin, "cage-xtmapper"))
+	entries, err := os.ReadDir(filepath.Join(h.root, "releases"))
+	must(t, err)
+	if len(entries) != 0 || !bytes.Equal(readFile(t, filepath.Join(h.root, "state.json")), stateUninstalled) {
+		t.Fatal("refused uninstall changed completed-removal state")
+	}
+	assertAbsent(t, filepath.Join(h.root, "transaction.json"))
+}
+
 func TestLegacyRefusal(t *testing.T) {
 	h := newHarness(t, false)
 	for _, name := range []string{"cage_xtmapper", "cage_xtmapper.sh"} {

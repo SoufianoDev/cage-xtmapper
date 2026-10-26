@@ -171,3 +171,298 @@ func TestFailedBootProbeOutputIsDiscarded(t *testing.T) {
 		t.Fatal("remote service started after a failed boot probe")
 	}
 }
+
+// TestRuntimePeerExitCancelsOtherSide prevents either pipeline child from
+// keeping the launcher alive after its peer has failed.
+func TestRuntimePeerExitCancelsOtherSide(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		mode       string
+		compositor string
+		wantCode   int
+	}{
+		{
+			name: "compositor exits first",
+			mode: "compositor",
+			compositor: `#!/bin/sh
+printf '%s\n' "$$" > "$MOCK_LOG/cage.pid"
+while [ ! -s "$MOCK_LOG/remote-command" ]; do sleep 0.01; done
+exit 9
+`,
+			wantCode: 9,
+		},
+		{
+			name: "remote exits first",
+			mode: "remote",
+			compositor: `#!/bin/sh
+printf '%s\n' "$$" > "$MOCK_LOG/cage.pid"
+while [ ! -s "$MOCK_LOG/remote-command" ]; do sleep 0.01; done
+exec sleep 600
+`,
+			wantCode: 7,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tools, logs := testEnv(t)
+			if err := os.WriteFile(tools.SelfExe, []byte(tc.compositor), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			waydroid := `#!/bin/sh
+case "$1 $2" in
+    'session stop'|'container start') exit 0 ;;
+    'shell getprop')
+        [ "$3" = sys.boot_completed ] && printf '1\n' || printf 'x86_64\n'
+        ;;
+    'shell pm') printf 'package:/data/app/xtmapper/base.apk\n' ;;
+    'shell --')
+        printf '%s\n' "$5" > "$MOCK_LOG/remote-command"
+        printf '%s\n' "$$" > "$MOCK_LOG/remote.pid"
+        if [ "$MOCK_PEER_MODE" = remote ]; then exit 7; fi
+        exec sleep 600
+        ;;
+    *) exit 1 ;;
+esac
+`
+			if err := os.WriteFile(tools.Waydroid, []byte(waydroid), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("MOCK_PEER_MODE", tc.mode)
+			start := time.Now()
+			code, _ := runLauncher(t, launcher.Config{Tools: tools})
+			if code != tc.wantCode {
+				t.Fatalf("exit %d, want %d", code, tc.wantCode)
+			}
+			if elapsed := time.Since(start); elapsed > 4*time.Second {
+				t.Fatalf("peer exit took too long: %s", elapsed)
+			}
+			assertStopped(t, waitPID(t, filepath.Join(logs, "cage.pid")))
+			assertStopped(t, waitPID(t, filepath.Join(logs, "remote.pid")))
+		})
+	}
+}
+
+// TestTermResistantPeerCannotStallExit prevents a remote peer that ignores
+// SIGTERM from extending the bounded first-exit cleanup indefinitely: the
+// launcher must still return the initiating compositor status after the
+// escalation deadline.
+func TestTermResistantPeerCannotStallExit(t *testing.T) {
+	tools, logs := testEnv(t)
+	compositor := `#!/bin/sh
+printf '%s\n' "$$" > "$MOCK_LOG/cage.pid"
+while [ ! -s "$MOCK_LOG/remote-command" ]; do sleep 0.01; done
+exit 9
+`
+	if err := os.WriteFile(tools.SelfExe, []byte(compositor), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	waydroid := `#!/bin/sh
+case "$1 $2" in
+    'session stop'|'container start') exit 0 ;;
+    'shell getprop')
+        [ "$3" = sys.boot_completed ] && printf '1\n' || printf 'x86_64\n'
+        ;;
+    'shell pm') printf 'package:/data/app/xtmapper/base.apk\n' ;;
+    'shell --')
+        printf '%s\n' "$5" > "$MOCK_LOG/remote-command"
+        printf '%s\n' "$$" > "$MOCK_LOG/remote.pid"
+        trap '' TERM
+        sleep 600 &
+        wait "$!"
+        exit 0
+        ;;
+    *) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(tools.Waydroid, []byte(waydroid), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	code, _ := runLauncher(t, launcher.Config{Tools: tools})
+	if code != 9 {
+		t.Fatalf("exit %d, want the initiating compositor status 9", code)
+	}
+	// The TERM-resistant group must survive past the TERM grace into the
+	// SIGKILL escalation instead of ending the wait early or never.
+	if elapsed := time.Since(start); elapsed < 4*time.Second || elapsed > 15*time.Second {
+		t.Fatalf("resistant peer cleanup took %s, want the bounded escalation window", elapsed)
+	}
+	assertStopped(t, waitPID(t, filepath.Join(logs, "cage.pid")))
+	assertStopped(t, waitPID(t, filepath.Join(logs, "remote.pid")))
+}
+
+// TestFailureSurvivesLateSignalDuringCleanup keeps the initiating failure
+// status when SIGTERM arrives while cleanup of the failed run is still in
+// progress: the late signal must not replace the recorded cause with 143.
+func TestFailureSurvivesLateSignalDuringCleanup(t *testing.T) {
+	tools, logs := testEnv(t)
+	t.Setenv("XTMAPPER_BOOT_WAIT_SECONDS", "10")
+	// The compositor exits 9 once the probe appears. One group member
+	// ignores TERM (SIG_IGN traps are inherited; captured ones are not)
+	// to keep the group alive through the TERM grace, and a second
+	// member records the delivered TERM. Cleanup only runs after
+	// supervise recorded the failure, so the marker is the
+	// deterministic signal that the shutdown cause is already fixed.
+	compositor := `#!/bin/sh
+printf '%s\n' "$$" > "$MOCK_LOG/cage.pid"
+sh -c 'trap "" TERM; sleep 600 & wait "$!"' &
+sh -c 'trap "touch \"\$MOCK_LOG/comp-term\"" TERM; sleep 600' &
+while [ ! -s "$MOCK_LOG/probe.pid" ]; do sleep 0.01; done
+exit 9
+`
+	if err := os.WriteFile(tools.SelfExe, []byte(compositor), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adb := `#!/bin/sh
+if [ "$2" = getprop ]; then
+    printf '%s\n' "$$" > "$MOCK_LOG/probe.pid"
+    exec sleep 600
+fi
+exit 1
+`
+	if err := os.WriteFile(tools.ADB, []byte(adb), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan int, 1)
+	go func() { result <- launcher.Run(launcher.Config{UseADB: true, Tools: tools}) }()
+
+	termMarker := filepath.Join(logs, "comp-term")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(termMarker); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("compositor cleanup did not start in time")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case code := <-result:
+		if code != 9 {
+			t.Fatalf("late cleanup signal changed the exit to %d, want the initiating failure 9", code)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("run did not return within the cleanup budget")
+	}
+	assertStopped(t, waitPID(t, filepath.Join(logs, "cage.pid")))
+}
+
+// TestHangingBootProbeRespectsDeadline bounds a startup probe that never
+// completes: the boot deadline must include probe time and the hung probe
+// must be cleaned up without reaching the remote launch.
+func TestHangingBootProbeRespectsDeadline(t *testing.T) {
+	tools, logs := testEnv(t)
+	t.Setenv("XTMAPPER_BOOT_WAIT_SECONDS", "2")
+	adb := `#!/bin/sh
+if [ "$2" = getprop ]; then
+    printf '%s\n' "$$" > "$MOCK_LOG/probe.pid"
+    exec sleep 600
+fi
+exit 1
+`
+	if err := os.WriteFile(tools.ADB, []byte(adb), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	code, stderr := runLauncher(t, launcher.Config{UseADB: true, Tools: tools})
+	if code != 1 || !strings.Contains(stderr, "did not finish booting within 2 seconds") {
+		t.Fatalf("hanging probe exit %d, stderr %s", code, stderr)
+	}
+	if elapsed := time.Since(start); elapsed > 6*time.Second {
+		t.Fatalf("hung probe was not bounded by the boot deadline: %s", elapsed)
+	}
+	assertStopped(t, waitPID(t, filepath.Join(logs, "probe.pid")))
+	if _, err := os.Stat(filepath.Join(logs, "remote-command")); !os.IsNotExist(err) {
+		t.Fatal("remote service launched after a hung boot probe")
+	}
+}
+
+func TestStartupDeadlineStartsAfterWaydroidLifecycle(t *testing.T) {
+	for _, phase := range []string{"stop", "container"} {
+		t.Run(phase, func(t *testing.T) {
+			tools, logs := testEnv(t)
+			t.Setenv("XTMAPPER_BOOT_WAIT_SECONDS", "2")
+			t.Setenv("MOCK_PHASE", phase)
+			waydroid := "#!/bin/sh\n" +
+				"case \"$1 $2\" in\n" +
+				"    'session stop') current=stop ;;\n" +
+				"    'container start') current=container ;;\n" +
+				"    *) exit 1 ;;\n" +
+				"esac\n" +
+				"if [ \"$MOCK_PHASE\" = \"$current\" ]; then\n" +
+				"    printf '%s\\n' \"$$\" > \"$MOCK_LOG/startup.pid\"\n" +
+				"    sleep 1\n" +
+				"fi\n" +
+				"exit 0\n"
+			if err := os.WriteFile(tools.Waydroid, []byte(waydroid), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			start := time.Now()
+			code, stderr := runLauncher(t, launcher.Config{Tools: tools})
+			elapsed := time.Since(start)
+			if code != 1 {
+				t.Fatalf("boot timeout after %s phase: exit %d, stderr %s", phase, code, stderr)
+			}
+			if !strings.Contains(stderr, "did not finish booting within 2 seconds") {
+				t.Fatalf("Android boot deadline was not reported after %s phase: %s", phase, stderr)
+			}
+			if elapsed < 2500*time.Millisecond {
+				t.Fatalf("Android boot wait appears to include %s time: total elapsed %s", phase, elapsed)
+			}
+			if elapsed > 5*time.Second {
+				t.Fatalf("startup %s exceeded its lifecycle plus boot wait allowance: %s", phase, elapsed)
+			}
+			assertStopped(t, waitPID(t, filepath.Join(logs, "startup.pid")))
+			// The compositor starts before the boot probes; verify it was cleaned
+			// up after the boot deadline instead of requiring it never to start.
+			assertStopped(t, waitPID(t, filepath.Join(logs, "cage.pid")))
+		})
+	}
+}
+
+func TestStartupDeadlineCoversABIAndAPKProbes(t *testing.T) {
+	for _, phase := range []string{"abi", "apk"} {
+		t.Run(phase, func(t *testing.T) {
+			tools, logs := testEnv(t)
+			t.Setenv("XTMAPPER_BOOT_WAIT_SECONDS", "2")
+			t.Setenv("MOCK_PHASE", phase)
+			adb := "#!/bin/sh\n" +
+				"case \"$2 $3\" in\n" +
+				"    'getprop sys.boot_completed') printf '1\\n' ;;\n" +
+				"    'getprop ro.product.cpu.abi')\n" +
+				"        if [ \"$MOCK_PHASE\" = abi ]; then printf '%s\\n' \"$$\" > \"$MOCK_LOG/probe.pid\"; exec sleep 600; fi\n" +
+				"        printf 'x86_64\\n' ;;\n" +
+				"    'pm path')\n" +
+				"        if [ \"$MOCK_PHASE\" = apk ]; then printf '%s\\n' \"$$\" > \"$MOCK_LOG/probe.pid\"; exec sleep 600; fi\n" +
+				"        printf 'package:/data/app/xtmapper/base.apk\\n' ;;\n" +
+				"    *) exit 1 ;;\n" +
+				"esac\n"
+			if err := os.WriteFile(tools.ADB, []byte(adb), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			start := time.Now()
+			code, stderr := runLauncher(t, launcher.Config{UseADB: true, Tools: tools})
+			elapsed := time.Since(start)
+			if code != 1 {
+				t.Fatalf("startup %s probe timeout exit %d, stderr %s", phase, code, stderr)
+			}
+			wantPhase := map[string]string{
+				"abi": "determining the Android CPU ABI",
+				"apk": "locating the XtMapper APK",
+			}[phase]
+			if !strings.Contains(stderr, "Android startup did not complete within 2 seconds while "+wantPhase) {
+				t.Fatalf("shared startup deadline was not reported for %s: %s", phase, stderr)
+			}
+			if elapsed > 5*time.Second {
+				t.Fatalf("startup %s probe exceeded the shared deadline and cleanup allowance: %s", phase, elapsed)
+			}
+			assertStopped(t, waitPID(t, filepath.Join(logs, "probe.pid")))
+			if _, err := os.Stat(filepath.Join(logs, "remote-command")); !os.IsNotExist(err) {
+				t.Fatal("remote service launched after a startup probe timed out")
+			}
+		})
+	}
+}

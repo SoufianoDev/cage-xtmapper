@@ -95,17 +95,19 @@ else
 fi
 
 if [[ "$prepared_fingerprint" != "$current_fingerprint" ]]; then
-    rm -rf -- "$source_dir"
     rm -rf -- "$meson_build_dir"
-    mkdir -p -- "$source_dir/subprojects/wlroots/subprojects/packagefiles"
-    stage_tree "$cage_source" "$source_dir" Cage
-    stage_tree "$wlroots_source" "$source_dir/subprojects/wlroots" wlroots
-    cp -- "${wrapfiles[@]}" "$source_dir/subprojects/wlroots/subprojects/"
-    ln -sf -- "${dependencies[@]}" "$source_dir/subprojects/wlroots/subprojects/packagefiles/"
-    printf '%s\n' "$current_fingerprint" > "$source_dir/$prepared_marker"
-elif [[ ! -d "$source_dir/subprojects/wlroots/subprojects/packagefiles" ]]; then
-    fail "Prepared source tree is incomplete at $source_dir; remove it and rerun build.sh."
 fi
+
+# The marker fingerprints authoritative inputs, not the mutable staging tree.
+# Reconstruct staging every time so edits under build/source cannot silently
+# change the compiled bytes while provenance still names native-src inputs.
+rm -rf -- "$source_dir"
+mkdir -p -- "$source_dir/subprojects/wlroots/subprojects/packagefiles"
+stage_tree "$cage_source" "$source_dir" Cage
+stage_tree "$wlroots_source" "$source_dir/subprojects/wlroots" wlroots
+cp -p -- "${wrapfiles[@]}" "$source_dir/subprojects/wlroots/subprojects/"
+ln -sf -- "${dependencies[@]}" "$source_dir/subprojects/wlroots/subprojects/packagefiles/"
+printf '%s\n' "$current_fingerprint" > "$source_dir/$prepared_marker"
 
 # Set the root and scoped wlroots options together, including when switching
 # modes in an existing Meson configuration.

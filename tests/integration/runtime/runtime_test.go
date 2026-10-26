@@ -176,7 +176,7 @@ func TestSelfExecSurvivesPathChange(t *testing.T) {
 			self := filepath.Join(dir, "cage-xtmapper")
 			for name, body := range map[string][]byte{
 				"cage-xtmapper": image,
-				"sudo":          []byte("#!/bin/sh\nexec \"$@\"\n"),
+				"sudo":          []byte("#!/bin/sh\nif [ \"${1-}\" = \"-n\" ]; then shift; fi\nexec \"$@\"\n"),
 				"waydroid": []byte(`#!/bin/sh
 case "$1 ${2-}" in
     'session stop')
