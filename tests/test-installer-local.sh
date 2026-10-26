@@ -29,15 +29,16 @@ go run ./tools/release package --version local-test-1 --output "$temporary/relea
 go run ./tools/release package --version local-test-2 --output "$temporary/release-2.tar"
 
 export XTMAPPER_INSTALLER_BIN="$temporary/install"
-./install.sh install --test-prefix "$prefix" --archive "$temporary/release-1.tar"
+./install.sh --test-prefix "$prefix" --archive "$temporary/release-1.tar"
 ./install.sh status --test-prefix "$prefix" > "$temporary/status-install.json"
 grep -q '"state":"installed"' "$temporary/status-install.json"
 
-./install.sh install --test-prefix "$prefix" --archive "$temporary/release-2.tar"
+./install.sh --test-prefix "$prefix" --archive "$temporary/release-2.tar"
 ./install.sh status --test-prefix "$prefix" > "$temporary/status-update.json"
 grep -q '"state":"installed"' "$temporary/status-update.json"
 
-./install.sh update --test-prefix "$prefix" --archive "$temporary/release-2.tar"
+./install.sh --test-prefix "$prefix" --archive "$temporary/release-2.tar" > "$temporary/status-current.txt"
+grep -q 'Status: already up to date' "$temporary/status-current.txt"
 ./install.sh uninstall --test-prefix "$prefix"
 ./install.sh status --test-prefix "$prefix" > "$temporary/status-uninstall.json"
 grep -q '"state":"uninstalled"' "$temporary/status-uninstall.json"

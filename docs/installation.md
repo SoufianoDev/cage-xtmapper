@@ -25,38 +25,33 @@ Use supported 64-bit Linux (amd64 or arm64), Bash, curl, `sha256sum`, `/proc`, l
 
 ## Commands
 
-Install or update directly from the latest published release without cloning the repository:
+Run the bootstrap without an operation argument to let it inspect the system and choose the right action. It installs when no managed release exists, updates an older active release, reports `already up to date` when the selected latest archive is identical, and attempts recovery of a recorded incomplete transaction before continuing.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-to-c-golang-no-submodule/install.sh | sudo bash -s -- install
-curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-to-c-golang-no-submodule/install.sh | sudo bash -s -- status
-curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-to-c-golang-no-submodule/install.sh | sudo bash -s -- recover
-curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-to-c-golang-no-submodule/install.sh | sudo bash -s -- uninstall
+curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-to-c-golang-no-submodule/install.sh | sudo bash
 ```
 
-A mutating command must run as root, usually via `sudo`; `status` can be run without root. Running `install` on an existing managed installation automatically updates it. If the release ID and archive contents already match, it succeeds without staging or changing the active state. Use `--version vX.Y.Z` to pin a published tag, `--repo OWNER/REPO` for a release hosted in another repository, or `--archive FILE` to use a local archive. A tag must have a published release with matching assets; draft releases are not available through the public latest-release endpoint. There is no persistent rollback command.
+You may pin a published release without selecting an explicit operation:
 
-| Command | Required State | Result |
-|---|---|---|
-| `install` | No active managed release, or an intact managed installation | Install the release, or converge to update if one is already active. Identical content is a no-op. |
-| `update` | Existing, intact managed installation | Activate a new release and remove the obsolete managed release; identical content is a no-op. |
-| `status` | Any readable state | Report active release and any incomplete transaction without modifying installation state. Unknown/corrupt installations produce an error. |
-| `recover` | Managed state or a complete recorded bootstrap | Inspect the real `current` symlink and journal; roll back precommit staging or finish postcommit cleanup. Repeating successful recovery is harmless. |
-| `uninstall` | Existing, intact managed installation | Remove the recorded launcher link and managed release data. |
+```bash
+curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-to-c-golang-no-submodule/install.sh | sudo bash -s -- --version vX.Y.Z
+```
 
-System mutations require root. A runtime or another administrative process holding a conflicting lock causes an immediate busy error. A pending transaction blocks install, update, and uninstall until recovery completes.
+The bootstrap downloads the prebuilt helper and matching archive, verifies both SHA-256 checksums, and delegates the filesystem transaction to the Go installer. The release transport currently uses the versioned `.tar` format for Linux amd64 and arm64. The installer is structured for a future package-aware backend, but native `.deb`, `.rpm`, Arch/Pacman and Alpine/APK packages and repositories are not yet implemented.
 
-| Exit Status | Meaning |
+At present, the installer can install recognized missing shared-library packages through APT on Debian/Ubuntu. Other distributions receive explicit errors for missing libraries; package names are not guessed. Waydroid and the XtMapper Android APK remain prerequisites. System mutations require root, normally supplied by `sudo`. The bootstrap's default auto mode is the normal user-facing entry point; explicit operations are retained for diagnostics and maintenance.
+
+| Explicit Operation | Result |
 |---|---|
-| `0` | Operation completed, or status reported successfully. |
-| `1` | Operation failed; no retained transaction was identified. |
-| `2` | Invalid command-line syntax. |
-| `3` | Busy lock; active installation files were not changed. |
-| `4` | An incomplete transaction remains. Inspect status and recover; the active release depends on whether the commit point was crossed. |
+| `status` | Report the active release and any recorded incomplete transaction without modifying state. |
+| `recover` | Attempt recovery directly. Normal auto mode attempts this when it detects a recorded incomplete transaction. |
+| `uninstall` | Remove the recorded launcher link and managed release data while preserving unowned files and the stable ownership record. |
+| `install` / `update` | Force the corresponding operation choice; the default auto mode is preferred for routine use. |
 
-Errors go to stderr. Status uses JSON on stdout; mutating commands report the active release, removals, and intentionally preserved paths. The installer never executes the release ELF to validate it.
+Auto recovery is conservative. If the journal is valid, the installer determines whether the commit point was crossed and completes rollback or cleanup accordingly, then continues toward the selected release. If required ownership metadata is missing or an object has been modified, it reports the conflict and preserves it rather than guessing. A busy runtime lock is not forcibly broken; the installer reports that the application is still running or another administrative operation is active.
 
-Repeating a command in a state it does not apply to is a deliberate refusal, not a no-op: `install` with an active managed release, `update` whose archive has the release id that is already active, and `uninstall` without an installed release all fail with exit status 1 and change nothing. A refused operation stages no release, replaces no link, state record, ownership inventory, or lock, and writes no transaction journal. Identical archives are never re-staged over an existing release id; to redeploy the same version, uninstall first or publish it under a new release id. Refusals keep conflicting or modified files protected; inspect them with `status` and resolve them explicitly.
+The status command can be run without root. The installer does not execute the release ELF to validate it. SHA-256 checksums detect corruption but do not authenticate the publisher; this remains a documented limitation until release-signing or provenance verification is added.
+
 
 ## Ownership And Legacy Files
 

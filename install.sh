@@ -35,6 +35,7 @@ if (($#)); then
     case "$1" in
         auto|install|update|status|recover|uninstall) operation="$1"; shift ;;
         -h|--help) usage; exit 0 ;;
+        --*) ;; # Options are parsed in the next pass.
         *) printf 'install.sh: unknown operation: %s\n' "$1" >&2; usage >&2; exit 2 ;;
     esac
 fi

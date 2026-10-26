@@ -15,29 +15,31 @@ The `v0.2.0` and `v0.1.5` branches retain their own build and installation proce
 
 ## Install Or Update
 
-Install the latest published stable release directly from GitHub. No Go toolchain, source checkout, or manual archive download is required:
+Run the installer without an operation argument. It checks the current installation and selects the necessary action automatically: install if absent, update if an older release is active, report that the system is already current when the release matches, and recover a recorded interrupted transaction before proceeding when its ownership records are valid.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-to-c-golang-no-submodule/install.sh | sudo bash -s -- install
+curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-to-c-golang-no-submodule/install.sh | sudo bash
 ```
 
-Run the same command again to update an existing managed installation. Select a specific published release with `--version`:
+To pin a published release, pass only the version option (the operation is still selected automatically):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-to-c-golang-no-submodule/install.sh | sudo bash -s -- install --version vX.Y.Z
+curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-to-c-golang-no-submodule/install.sh | sudo bash -s -- --version vX.Y.Z
 ```
 
-The bootstrap downloads a prebuilt helper and the matching release archive for Linux amd64 or arm64. It checks both SHA-256 files before passing the archive to the transactional installer. Missing shared libraries are installed automatically through APT on Debian/Ubuntu; on other distributions, the installer reports missing libraries rather than guessing package names. Waydroid and the XtMapper Android APK must already be set up.
+The bootstrap downloads the prebuilt helper and release archive for Linux amd64 or arm64, then verifies both SHA-256 checksums before installation. At this stage, releases still use the project's versioned `.tar` archive; native `.deb`, `.rpm`, Arch and Alpine package integration is a future extension, not a currently advertised capability. Runtime shared-library packages can currently be installed automatically through APT on Debian/Ubuntu; other distributions receive a clear missing-library error rather than guessed package names. Waydroid and the XtMapper Android APK remain prerequisites.
 
-The installer stores releases under `/opt/cage-xtmapper` and creates `/usr/local/bin/cage-xtmapper`. Updates switch releases atomically and remove only files recorded as installer-owned. When a recognized old `cage_xtmapper.sh` launcher is paired with a valid executable ELF at `cage_xtmapper`, both are moved to uniquely named backups after activation. Unknown files and unpaired legacy binaries are preserved and block installation until inspected. SHA-256 checksums detect corruption but do not authenticate the publisher.
+The installer stores managed releases under `/opt/cage-xtmapper` and creates `/usr/local/bin/cage-xtmapper`. Updates switch releases atomically and remove only files recorded as installer-owned. A recognized old `cage_xtmapper.sh` launcher and its paired valid ELF are moved to uniquely named backups only after activation. Unknown files are preserved and may block installation until inspected. SHA-256 checksums detect corruption but do not authenticate the publisher.
 
-Developers can exercise install, update, repeated-install, status, and uninstall locally without publishing a GitHub Release:
+The same no-argument command can be run again safely. When the installed release exactly matches the newest selected archive, the installer reports `already up to date` instead of staging it again. Recorded incomplete transactions are recovered automatically when their journal and object identities are sufficient; if ownership cannot be verified, the installer stops and preserves conflicting data. Explicit `status`, `recover`, and `uninstall` operations remain available for diagnostics and maintenance.
+
+Developers can test automatic install, update, same-version no-op, status, and uninstall without publishing a GitHub Release:
 
 ```bash
 bash tests/test-installer-local.sh
 ```
 
-See [Installation And Recovery](docs/installation.md) for safety guarantees, migration behavior, recovery, and test options.
+See [Installation And Recovery](docs/installation.md) for the ownership guarantees, legacy migration, recovery behavior, and local test options.
 
 ## Run
 
