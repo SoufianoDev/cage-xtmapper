@@ -380,7 +380,7 @@ exit 1
 	}
 }
 
-func TestStartupDeadlineCoversWaydroidLifecycle(t *testing.T) {
+func TestStartupDeadlineStartsAfterWaydroidLifecycle(t *testing.T) {
 	for _, phase := range []string{"stop", "container"} {
 		t.Run(phase, func(t *testing.T) {
 			tools, logs := testEnv(t)
@@ -393,8 +393,8 @@ func TestStartupDeadlineCoversWaydroidLifecycle(t *testing.T) {
 				"    *) exit 1 ;;\n" +
 				"esac\n" +
 				"if [ \"$MOCK_PHASE\" = \"$current\" ]; then\n" +
-				"    printf '%s\\n' \"$$\" > \"$MOCK_LOG/startup.pid\"\n" +
-				"    exec sleep 600\n" +
+				"    printf '%s\\n' \"$\" > \"$MOCK_LOG/startup.pid\"\n" +
+				"    sleep 1\n" +
 				"fi\n" +
 				"exit 0\n"
 			if err := os.WriteFile(tools.Waydroid, []byte(waydroid), 0o755); err != nil {
@@ -404,21 +404,20 @@ func TestStartupDeadlineCoversWaydroidLifecycle(t *testing.T) {
 			code, stderr := runLauncher(t, launcher.Config{Tools: tools})
 			elapsed := time.Since(start)
 			if code != 1 {
-				t.Fatalf("startup %s timeout exit %d, stderr %s", phase, code, stderr)
+				t.Fatalf("boot timeout after %s phase: exit %d, stderr %s", phase, code, stderr)
 			}
-			wantPhase := map[string]string{
-				"stop":      "stopping the Waydroid session",
-				"container": "starting the Waydroid container",
-			}[phase]
-			if !strings.Contains(stderr, "Android startup did not complete within 2 seconds while "+wantPhase) {
-				t.Fatalf("shared startup deadline was not reported for %s: %s", phase, stderr)
+			if !strings.Contains(stderr, "did not finish booting within 2 seconds") {
+				t.Fatalf("Android boot deadline was not reported after %s phase: %s", phase, stderr)
+			}
+			if elapsed < 2500*time.Millisecond {
+				t.Fatalf("Android boot wait appears to include %s time: total elapsed %s", phase, elapsed)
 			}
 			if elapsed > 5*time.Second {
-				t.Fatalf("startup %s exceeded the shared deadline and cleanup allowance: %s", phase, elapsed)
+				t.Fatalf("startup %s exceeded its lifecycle plus boot wait allowance: %s", phase, elapsed)
 			}
 			assertStopped(t, waitPID(t, filepath.Join(logs, "startup.pid")))
 			if _, err := os.Stat(filepath.Join(logs, "cage.pid")); !os.IsNotExist(err) {
-				t.Fatal("compositor started even though Waydroid startup timed out")
+				t.Fatal("compositor started even though Android boot did not complete")
 			}
 		})
 	}
