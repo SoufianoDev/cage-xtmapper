@@ -70,7 +70,57 @@ func SourceDigest(repo string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func licenseTexts(repo string, archives []string) ([]release.License, map[string]string, error) {
+type pluginLicenseRule struct {
+	component string
+	license   string
+	header    string
+}
+
+func littleCMSPluginLicenseRule(archive string) (pluginLicenseRule, bool) {
+	switch archive {
+	case "liblcms2_fast_float.a":
+		return pluginLicenseRule{component: "LittleCMS-fast-float", license: "GPL-3.0-or-later", header: "lcms2_fast_float.h"}, true
+	case "liblcms2_threaded.a":
+		return pluginLicenseRule{component: "LittleCMS-threaded", license: "GPL-3.0-or-later", header: "lcms2_threaded.h"}, true
+	default:
+		return pluginLicenseRule{}, false
+	}
+}
+
+// pluginEntrySymbols maps a LittleCMS GPL plugin archive to the registration
+// symbol that proves its code linked into the produced ELF. Debian's lcms2
+// package lists both plugin archives on every lcms2 link line, but the linker
+// pulls a member only to satisfy a reference, so presence on the link line
+// alone must not create a license component for the distribution.
+var pluginEntrySymbols = map[string]string{
+	"liblcms2_fast_float.a": "cmsFastFloatExtensions",
+	"liblcms2_threaded.a":   "cmsThreadedExtensions",
+}
+
+func pluginEntryLinked(binary, entry string) (bool, error) {
+	file, err := elf.Open(binary)
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+	for _, table := range []func() ([]elf.Symbol, error){file.Symbols, file.DynamicSymbols} {
+		symbols, err := table()
+		if errors.Is(err, elf.ErrNoSymbols) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		for _, symbol := range symbols {
+			if symbol.Name == entry {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func licenseTexts(repo, binary string, archives []string) ([]release.License, map[string]string, error) {
 	source := filepath.Join(repo, "build/source/cage-0.3.0")
 	type rule struct{ component, license, path string }
 	rules := map[string]rule{
@@ -155,14 +205,30 @@ func licenseTexts(repo string, archives []string) ([]release.License, map[string
 			}
 			add("libdrm", "MIT and source notices", []byte(notices.String()))
 		case "liblcms2_fast_float.a", "liblcms2_threaded.a":
-			notice, err := firstFile("/usr/share/doc/liblcms2-dev/copyright", "/usr/share/licenses/lcms2/COPYING")
+			rule, ok := littleCMSPluginLicenseRule(name)
+			if !ok {
+				return nil, nil, fmt.Errorf("no license rule for LittleCMS plugin archive: %s", name)
+			}
+			linked, err := pluginEntryLinked(binary, pluginEntrySymbols[name])
 			if err != nil {
 				return nil, nil, err
 			}
-			if err := addFile("LittleCMS-plugins", "GPL-3.0-only (see component notices)", notice); err != nil {
+			if !linked {
+				// The archive rides the link line via pkg-config, but the
+				// linker pulled no code from it: it is not part of the ELF.
+				continue
+			}
+			notice, err := firstFile(
+				filepath.Join("/usr/include", rule.header),
+				filepath.Join("/usr/include/lcms2", rule.header),
+			)
+			if err != nil {
 				return nil, nil, err
 			}
-			if err := addFile("GPL-3", "GPL-3.0-only", "/usr/share/common-licenses/GPL-3"); err != nil {
+			if err := addFile(rule.component, rule.license, notice); err != nil {
+				return nil, nil, err
+			}
+			if err := addFile("GPL-3", "GPL-3.0 text", "/usr/share/common-licenses/GPL-3"); err != nil {
 				return nil, nil, err
 			}
 		default:
@@ -291,7 +357,7 @@ func RecordBuild(repo string) error {
 	if len(archives) == 0 {
 		return fmt.Errorf("missing native static archive inputs")
 	}
-	licenses, texts, err := licenseTexts(repo, archives)
+	licenses, texts, err := licenseTexts(repo, binary, archives)
 	if err != nil {
 		return err
 	}

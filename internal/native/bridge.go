@@ -2,6 +2,7 @@
 package native
 
 // #cgo pkg-config: cage-xtmapper-native
+// #include <stdio.h>
 // #include <stdlib.h>
 // #include "bridge.h"
 import "C"
@@ -15,7 +16,8 @@ import (
 
 // Run executes the compositor with a getopt-style argument list.
 func Run(args []string, controlFD int) int {
-	cArgv := make([]*C.char, len(args))
+	// POSIX argv vectors must be NULL-terminated; argc excludes that terminator.
+	cArgv := make([]*C.char, len(args)+1)
 	for i, arg := range args {
 		cArgv[i] = C.CString(arg)
 	}
@@ -26,7 +28,10 @@ func Run(args []string, controlFD int) int {
 	}()
 	opts := C.struct_cage_xtmapper_options{}
 	opts.control_fd = C.int(controlFD)
-	return int(C.cage_xtmapper_main(C.int(len(args)), &cArgv[0], &opts))
+	code := int(C.cage_xtmapper_main(C.int(len(args)), &cArgv[0], &opts))
+	// main exits through os.Exit in Go, which does not flush C stdio buffers.
+	C.fflush(nil)
+	return code
 }
 
 // InternalMode reports whether the process is running in the embedded-compositor dispatch.

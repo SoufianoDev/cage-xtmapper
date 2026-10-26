@@ -44,6 +44,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+
       - name: Install build dependencies
         run: |
           sudo ./install_deps.sh
@@ -68,7 +73,12 @@ jobs:
 
       - name: Check Go formatting, runtime and installation
         run: |
-          test -z "$(gofmt -l cmd internal tools tests)"
+          gofmt_files="$(gofmt -l cmd internal tools tests)"
+          if [[ -n "$gofmt_files" ]]; then
+            printf 'Go files need gofmt:\n%s\n' "$gofmt_files" >&2
+            while IFS= read -r file; do gofmt -d "$file" || true; done <<< "$gofmt_files"
+            exit 1
+          fi
           export CC=clang PKG_CONFIG_PATH="$PWD/build/native/pkgconfig"
           go vet ./...
           go test -race -count=1 ./...

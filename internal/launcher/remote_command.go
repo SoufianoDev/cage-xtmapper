@@ -43,13 +43,21 @@ func deriveNativeLibPath(apkPath, abi string) string {
 // adb path invokes the shell directly; the Waydroid path chains env
 // BOOTCLASSPATH=$BOOTCLASSPATH:<list> first.
 func buildRemoteCommand(useADB bool, nativeLibPath, apkPath string, args []string) string {
+	return buildRemoteCommandWithExecutable(useADB, nativeLibPath, apkPath, args, "/system/bin/app_process")
+}
+
+// buildRemoteCommandWithExecutable shares the production quoting logic while
+// allowing a local fixture executable to exercise the remote shell round trip.
+func buildRemoteCommandWithExecutable(useADB bool, nativeLibPath, apkPath string, args []string, executable string) string {
 	var b strings.Builder
 	if useADB {
-		b.WriteString("exec /system/bin/app_process")
+		b.WriteString("exec ")
+		b.WriteString(shellQuote(executable))
 	} else {
 		b.WriteString("exec env BOOTCLASSPATH=$BOOTCLASSPATH:")
 		b.WriteString(shellQuote(bootClasspath))
-		b.WriteString(" /system/bin/app_process")
+		b.WriteByte(' ')
+		b.WriteString(shellQuote(executable))
 	}
 	fmt.Fprintf(&b, " -Djava.library.path=%s -Djava.class.path=%s / xtr.keymapper.server.RemoteServiceShell",
 		shellQuote(nativeLibPath), shellQuote(apkPath))
