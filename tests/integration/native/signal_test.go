@@ -314,6 +314,32 @@ func TestInternalClientArguments(t *testing.T) {
 	}
 }
 
+// TestInternalClientSpawnFailureTearsDownCleanly pins the startup-failure path
+// that used to SIGABRT: a failed primary-client spawn reaches the shared
+// teardown, where still-registered listeners made wl_display_destroy trip
+// wlroots assertions. Every teardown listener must be removed on all paths.
+func TestInternalClientSpawnFailureTearsDownCleanly(t *testing.T) {
+	cmd := exec.Command(binPath, "--internal-cage", "-s", "-m", "last", "--", "/does/not/exist")
+	var errb bytes.Buffer
+	cmd.Stderr = &errb
+	cmd.Env = headlessEnv(t)
+	err := cmd.Run()
+	exit, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("expected exit error, got %v (stderr %q)", err, errb.String())
+	}
+	if exit.ExitCode() != 1 {
+		t.Fatalf("expected exit status 1, got %d (stderr %q)", exit.ExitCode(), errb.String())
+	}
+	if bytes.Contains(errb.Bytes(), []byte("SIGABRT")) ||
+		bytes.Contains(errb.Bytes(), []byte("wl_list_empty")) {
+		t.Fatalf("compositor aborted during teardown: %q", errb.String())
+	}
+	if !bytes.Contains(errb.Bytes(), []byte("Unable to spawn client")) {
+		t.Fatalf("spawn-failure diagnostics missing from stderr: %q", errb.String())
+	}
+}
+
 // TestInternalNoClientStarts covers the zero-argument spawn boundary
 // (optind == argc): the compositor starts without a primary client and
 // still shuts down through the embedded control path.
