@@ -393,7 +393,7 @@ func TestStartupDeadlineStartsAfterWaydroidLifecycle(t *testing.T) {
 				"    *) exit 1 ;;\n" +
 				"esac\n" +
 				"if [ \"$MOCK_PHASE\" = \"$current\" ]; then\n" +
-				"    printf '%s\\n' \"$\" > \"$MOCK_LOG/startup.pid\"\n" +
+				"    printf '%s\\n' \"$$\" > \"$MOCK_LOG/startup.pid\"\n" +
 				"    sleep 1\n" +
 				"fi\n" +
 				"exit 0\n"
