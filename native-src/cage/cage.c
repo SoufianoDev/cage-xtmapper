@@ -359,6 +359,19 @@ cage_xtmapper_main(int argc, char *argv[], const struct cage_xtmapper_options *o
 	struct wl_event_source *control_source = NULL;
 	pid_t pid = 0;
 	int ret = 0, app_ret = 0;
+	/* Pre-self-link every listener removed during teardown: early failure
+	 * exits may skip some registrations, and wl_list_remove on a
+	 * registered-less (initialized) link is a safe no-op. */
+	wl_list_init(&server.output_layout_change.link);
+	wl_list_init(&server.new_output.link);
+	wl_list_init(&server.new_idle_inhibitor_v1.link);
+	wl_list_init(&server.new_xdg_popup.link);
+	wl_list_init(&server.new_xdg_toplevel.link);
+	wl_list_init(&server.xdg_toplevel_decoration.link);
+	wl_list_init(&server.output_manager_test.link);
+	wl_list_init(&server.output_manager_apply.link);
+	wl_list_init(&server.new_virtual_keyboard.link);
+	wl_list_init(&server.new_virtual_pointer.link);
 
 	/* getopt keeps global state; a library entry must be callable from any state */
 	optind = 0;
@@ -716,11 +729,8 @@ cage_xtmapper_main(int argc, char *argv[], const struct cage_xtmapper_options *o
 #endif
 	wl_display_destroy_clients(server.wl_display);
 
-#if WLR_HAS_DRM_BACKEND
-	if (server.drm_lease_v1) {
-		wl_list_remove(&server.drm_lease_request.link);
-	}
-#endif
+end:
+	/* Teardown listener removals for every path (see wl_list_init above). */
 	wl_list_remove(&server.new_virtual_pointer.link);
 	wl_list_remove(&server.new_virtual_keyboard.link);
 	wl_list_remove(&server.output_manager_apply.link);
@@ -732,7 +742,12 @@ cage_xtmapper_main(int argc, char *argv[], const struct cage_xtmapper_options *o
 	wl_list_remove(&server.new_output.link);
 	wl_list_remove(&server.output_layout_change.link);
 
-end:
+#if WLR_HAS_DRM_BACKEND
+	if (server.drm_lease_v1) {
+		wl_list_remove(&server.drm_lease_request.link);
+	}
+#endif
+
 	if (pid != 0 && control_source != NULL) {
 		/* Embedded launcher mode: the shutdown request came through the
 		 * control channel, which does not reach the primary client. Let
