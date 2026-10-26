@@ -134,7 +134,11 @@ func (h *harness) archive(version string) (string, string) {
 }
 
 func (h *harness) args(operation, archive string) []string {
-	args := []string{operation, "--test-prefix", h.prefix}
+	args := []string{}
+	if operation != "" {
+		args = append(args, operation)
+	}
+	args = append(args, "--test-prefix", h.prefix)
 	if archive != "" {
 		args = append(args, "--archive", archive)
 	}

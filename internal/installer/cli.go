@@ -93,8 +93,18 @@ func Run(args []string, output, diagnostics io.Writer) int {
 		fmt.Fprintln(diagnostics, "The default mode recovers recorded transactions, then installs, updates, or reports the active release is current.")
 	}
 	operation := "auto"
+	operationArgs := args
 	if len(args) > 0 {
-		operation = args[0]
+		switch args[0] {
+		case "auto", "install", "update", "status", "recover", "uninstall", "--help", "-h":
+			operation = args[0]
+			operationArgs = args[1:]
+		default:
+			if len(args[0]) > 0 && args[0][0] != '-' {
+				operation = args[0]
+				operationArgs = args[1:]
+			}
+		}
 	}
 	if operation == "--help" || operation == "-h" {
 		usage()
@@ -106,12 +116,8 @@ func Run(args []string, output, diagnostics io.Writer) int {
 	}
 	flags := flag.NewFlagSet("install.sh "+operation, flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
-	archive := flags.String("archive", "", "explicit local release .tar (install/update only)")
+	archive := flags.String("archive", "", "explicit local release .tar (auto/install/update)")
 	prefix := flags.String("test-prefix", "", "existing private test root containing opt/ and usr/local/bin/")
-	operationArgs := args
-	if len(operationArgs) > 0 {
-		operationArgs = operationArgs[1:]
-	}
 	if err := flags.Parse(operationArgs); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0

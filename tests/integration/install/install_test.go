@@ -187,45 +187,38 @@ func TestAtomicActivation(t *testing.T) {
 	}
 }
 
-// TestRepeatedOperationsRefuseWithStateIntact pins the documented strict
-// command-state contract: repeating a command in a state it does not apply
-// to is a safe refusal (exit 1), not a silent no-op, and must leave the
-// active link, release set, state record, and journal handling untouched.
-func TestRepeatedOperationsRefuseWithStateIntact(t *testing.T) {
+// TestRepeatedOperationsAreIdempotent ensures the same release is not staged
+// again and that the installer reports the active release as current.
+func TestRepeatedOperationsAreIdempotent(t *testing.T) {
 	h := newHarness(t, false)
 	h.run("install", h.v1, 0)
 	stateBefore := readFile(t, filepath.Join(h.root, "state.json"))
 	lock := stat(t, filepath.Join(h.root, ".install.lock"))
 
-	// install against an active installation is refused without restaging.
-	_, stderr := h.run("install", h.v1, 1)
-	if !strings.Contains(stderr, "invalid install for the current installation state") {
-		t.Fatal(stderr)
+	stdout, _ := h.run("install", h.v1, 0)
+	if !strings.Contains(stdout, "Status: already up to date") {
+		t.Fatal(stdout)
 	}
 	if h.active() != "releases/"+h.id1 || !bytes.Equal(readFile(t, filepath.Join(h.root, "state.json")), stateBefore) {
-		t.Fatal("refused install modified the installation")
+		t.Fatal("repeated install changed the active installation")
 	}
 	h.onlyRelease(h.id1)
 
-	// update with the already-installed release is refused without adoption
-	// or replacement, and writes no transaction journal.
-	_, stderr = h.run("update", h.v1, 1)
-	if !strings.Contains(stderr, "release destination already exists") {
-		t.Fatal(stderr)
+	stdout, _ = h.run("update", h.v1, 0)
+	if !strings.Contains(stdout, "Status: already up to date") {
+		t.Fatal(stdout)
 	}
 	if h.active() != "releases/"+h.id1 || !bytes.Equal(readFile(t, filepath.Join(h.root, "state.json")), stateBefore) {
-		t.Fatal("refused update modified the installation")
+		t.Fatal("same-release update changed the active installation")
 	}
 	h.onlyRelease(h.id1)
 	if !os.SameFile(lock, stat(t, filepath.Join(h.root, ".install.lock"))) {
-		t.Fatal("refused operations replaced the install lock")
+		t.Fatal("idempotent operations replaced the install lock")
 	}
 
-	// uninstall removes the installation; a second uninstall is refused and
-	// preserves the completed removal.
 	h.run("uninstall", "", 0)
 	stateUninstalled := readFile(t, filepath.Join(h.root, "state.json"))
-	_, stderr = h.run("uninstall", "", 1)
+	_, stderr := h.run("uninstall", "", 1)
 	if !strings.Contains(stderr, "no installed release to uninstall") {
 		t.Fatal(stderr)
 	}
@@ -312,6 +305,29 @@ func TestInstallAutomaticallyUpdatesNewerRelease(t *testing.T) {
 		t.Fatal("install did not activate the newer release")
 	}
 	h.onlyRelease(h.id2)
+}
+
+
+// TestAutomaticModeRecoversInterruptedTransactions verifies that the ordinary
+// no-operation entry point repairs a recorded transaction and then converges
+// to the selected release without requiring an explicit recover command.
+func TestAutomaticModeRecoversInterruptedTransactions(t *testing.T) {
+	for _, checkpoint := range []string{"before-commit", "after-commit"} {
+		t.Run(checkpoint, func(t *testing.T) {
+			h := newHarness(t, false)
+			h.run("install", h.v1, 0)
+			h.crash("update", h.v2, checkpoint)
+
+			stdout, stderr := h.run("", h.v2, 0)
+			if stderr != "" {
+				t.Fatal(stderr)
+			}
+			if checkpoint == "after-commit" && !strings.Contains(stdout, "Status: already up to date") {
+				t.Fatal(stdout)
+			}
+			h.onlyRelease(h.id2)
+		})
+	}
 }
 
 func TestUninstallPreservesUnrelatedData(t *testing.T) {
