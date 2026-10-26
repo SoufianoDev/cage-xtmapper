@@ -194,7 +194,6 @@ func runInheritForeground(ctx context.Context, cmd *exec.Cmd, timeout time.Durat
 	return runBoundedForeground(ctx, cmd, timeout)
 }
 
-
 func setTerminalForegroundGroup(tty *os.File, pgid int) error {
 	// Restoring the launcher's group happens while its process group is in the
 	// background, so temporarily ignore SIGTTOU around the terminal ioctl.
