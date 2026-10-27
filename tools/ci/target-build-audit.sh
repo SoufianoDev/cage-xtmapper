@@ -77,7 +77,11 @@ esac
 record_environment
 go env GOVERSION > "$audit/go-toolchain.txt"
 
-./build.sh 2>&1 | tee "$audit/build.log"
+if ! ./build.sh > "$audit/build.log" 2>&1; then
+  cat "$audit/build.log" >&2
+  exit 1
+fi
+cat "$audit/build.log"
 
 binary="build/go/cage-xtmapper"
 meson_info="build/meson/meson-info"
