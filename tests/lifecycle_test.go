@@ -65,6 +65,13 @@ exec sleep 600
 				done := make(chan int, 1)
 				go func() { done <- launcher.Run(launcher.Config{Tools: tools}) }()
 				pid := waitPID(t, filepath.Join(logs, "blocked.pid"))
+				var cagePID int
+				if phase == "probe" {
+					// The compositor starts immediately before the blocked Android
+					// probe. Wait for its PID before signalling so this test cannot
+					// race the compositor's own startup on slower architectures.
+					cagePID = waitPID(t, filepath.Join(logs, "cage.pid"))
+				}
 				if err := syscall.Kill(syscall.Getpid(), sig); err != nil {
 					t.Fatal(err)
 				}
@@ -78,7 +85,7 @@ exec sleep 600
 				}
 				assertStopped(t, pid)
 				if phase == "probe" {
-					assertStopped(t, waitPID(t, filepath.Join(logs, "cage.pid")))
+					assertStopped(t, cagePID)
 				}
 			})
 		}
