@@ -243,6 +243,49 @@ assert_installed_version() {
   printf '%s\n' "$actual" > "$audit/package-version-$suffix.txt"
 }
 
+assert_removed() {
+  suffix="$1"
+  case "$TARGET_ID" in
+    debian-13|ubuntu-24.04|ubuntu-26.04)
+      if dpkg-query -W cage-xtmapper >/dev/null 2>&1; then
+        echo "Debian package metadata remains after removal ($suffix)." >&2
+        exit 1
+      fi
+      ;;
+    fedora-44)
+      if rpm -q cage-xtmapper >/dev/null 2>&1; then
+        echo "RPM package metadata remains after removal ($suffix)." >&2
+        exit 1
+      fi
+      ;;
+    archlinux)
+      if pacman -Q cage-xtmapper >/dev/null 2>&1; then
+        echo "Pacman package metadata remains after removal ($suffix)." >&2
+        exit 1
+      fi
+      ;;
+    alpine-3.24)
+      if apk info --exists cage-xtmapper >/dev/null 2>&1; then
+        echo "APK package metadata remains after removal ($suffix)." >&2
+        exit 1
+      fi
+      ;;
+  esac
+
+  for path in /usr/bin/cage-xtmapper /usr/share/doc/cage-xtmapper /usr/share/licenses/cage-xtmapper; do
+    if [ -e "$path" ] || [ -L "$path" ]; then
+      echo "Package-owned path remains after removal ($suffix): $path" >&2
+      exit 1
+    fi
+  done
+  {
+    echo "package_installed=false"
+    echo "absent=/usr/bin/cage-xtmapper"
+    echo "absent=/usr/share/doc/cage-xtmapper"
+    echo "absent=/usr/share/licenses/cage-xtmapper"
+  } > "$audit/package-removal-$suffix.txt"
+}
+
 previous_version="0.0.$((GITHUB_RUN_ID - 1))"
 package_version="0.0.$GITHUB_RUN_ID"
 
@@ -267,6 +310,7 @@ case "$TARGET_ID" in
     assert_installed_version "$package_version" deb-upgrade-after-downgrade
     dpkg --audit > "$audit/dpkg-audit-before-purge.txt"
     run_logged deb-purge apt-get purge -y cage-xtmapper
+    assert_removed deb-purge
     test ! -e /usr/bin/cage-xtmapper
     if dpkg-query -W cage-xtmapper > "$audit/deb-query-after-purge.txt" 2>&1; then
       echo "Debian package metadata remains after purge." >&2
@@ -276,6 +320,7 @@ case "$TARGET_ID" in
     run_logged deb-clean-reinstall apt-get install -y "$package"
     assert_installed_version "$package_version" deb-clean-reinstall
     run_logged deb-final-purge apt-get purge -y cage-xtmapper
+    assert_removed deb-final-purge
     test ! -e /usr/bin/cage-xtmapper
     echo "Debian lifecycle passed: install, upgrade, current/no-op, explicit downgrade, upgrade, purge, clean reinstall, purge." | tee "$audit/deb-lifecycle-result.txt"
     ;;
@@ -297,10 +342,12 @@ case "$TARGET_ID" in
     run_logged rpm-upgrade-after-downgrade dnf install -y "$package"
     assert_installed_version "$package_version" rpm-upgrade-after-downgrade
     run_logged rpm-remove dnf remove -y cage-xtmapper
+    assert_removed rpm-remove
     test ! -e /usr/bin/cage-xtmapper
     run_logged rpm-clean-reinstall dnf install -y "$package"
     assert_installed_version "$package_version" rpm-clean-reinstall
     run_logged rpm-final-remove dnf remove -y cage-xtmapper
+    assert_removed rpm-final-remove
     test ! -e /usr/bin/cage-xtmapper
     echo "RPM lifecycle passed: install, upgrade, same-version reinstall, explicit downgrade, upgrade, remove, clean reinstall, remove." | tee "$audit/rpm-lifecycle-result.txt"
     ;;
@@ -323,10 +370,12 @@ case "$TARGET_ID" in
     run_logged arch-upgrade-after-downgrade pacman -U --noconfirm "$package"
     assert_installed_version "$package_version" arch-upgrade-after-downgrade
     run_logged arch-remove pacman -Rns --noconfirm cage-xtmapper
+    assert_removed arch-remove
     test ! -e /usr/bin/cage-xtmapper
     run_logged arch-clean-reinstall pacman -U --noconfirm "$package"
     assert_installed_version "$package_version" arch-clean-reinstall
     run_logged arch-final-remove pacman -Rns --noconfirm cage-xtmapper
+    assert_removed arch-final-remove
     test ! -e /usr/bin/cage-xtmapper
     echo "Pacman lifecycle passed: install, upgrade, same-version reinstall, explicit downgrade, upgrade, remove, clean reinstall, remove." | tee "$audit/arch-lifecycle-result.txt"
     ;;
@@ -345,10 +394,12 @@ case "$TARGET_ID" in
     assert_installed_version "$package_version" apk-current-noop
     printf '%s\n' "Skipped: Alpine documents package/version downgrade as unsupported; no APK world-state mutation attempted. https://wiki.alpinelinux.org/wiki/Upgrading_from_older_versions" > "$audit/apk-downgrade-policy.txt"
     run_logged apk-remove apk del cage-xtmapper
+    assert_removed apk-remove
     test ! -e /usr/bin/cage-xtmapper
     run_logged apk-clean-reinstall apk add --allow-untrusted "$package"
     assert_installed_version "$package_version" apk-clean-reinstall
     run_logged apk-final-remove apk del cage-xtmapper
+    assert_removed apk-final-remove
     test ! -e /usr/bin/cage-xtmapper
     echo "APK lifecycle passed: install, upgrade, current/no-op, remove, clean reinstall, remove. Explicit downgrade is not claimed." | tee "$audit/apk-lifecycle-result.txt"
     ;;
