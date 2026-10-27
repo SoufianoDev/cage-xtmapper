@@ -83,9 +83,9 @@ Source0:        cage-xtmapper-%{version}.tar.gz
 AutoReqProv:    yes
 
 %description
-Cage XtMapper packages a Cage/wlroots-based executable integrated with the
-XtMapper Android application. Waydroid and the XtMapper APK are prerequisites
-and are not installed by this package.
+Cage XtMapper packages a Wayland compositor-based executable integrated
+with the XtMapper Android application. The Android container environment and
+the XtMapper APK are prerequisites and are not installed by this package.
 
 %prep
 %autosetup -n cage-xtmapper-%{version}
