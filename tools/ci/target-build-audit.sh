@@ -44,301 +44,287 @@ record_environment() {
 
 case "$TARGET_ID" in
   debian-13|ubuntu-24.04|ubuntu-26.04)
-    previous_version="0.0.$((GITHUB_RUN_ID - 1))"
-    package_version="0.0.$GITHUB_RUN_ID"
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends \
+      bash ca-certificates curl xz-utils file binutils git clang bison jq dpkg-dev zstd \
+      meson ninja-build pkg-config golang-go libffi-dev libexpat1-dev \
+      libxml2-dev libwayland-dev libseat-dev libxkbcommon-dev \
+      libpixman-1-dev libudev-dev libinput-dev libdrm-dev \
+      libdisplay-info-dev libliftoff-dev hwdata scdoc libgbm-dev \
+      libgles-dev libegl-dev wayland-protocols
+    ;;
+  fedora-44)
+    dnf install -y \
+      bash ca-certificates curl xz file binutils git clang bison meson \
+      ninja-build pkgconf-pkg-config go libffi-devel expat-devel \
+      libxml2-devel wayland-devel libxkbcommon-devel pixman-devel \
+      libinput-devel libdrm-devel libdisplay-info-devel libliftoff-devel \
+      mesa-libEGL-devel mesa-libGLES-devel mesa-libgbm-devel libseat-devel \
+      systemd-devel hwdata scdoc wayland-protocols-devel rpm-build jq zstd
+    ;;
+  archlinux)
+    if [ "${TARGET_REPO_SNAPSHOT:-}" != "2026-10-26" ]; then
+      echo "TARGET_REPO_SNAPSHOT must equal 2026-10-26 for this pinned audit." >&2
+      exit 2
+    fi
+    cat > /etc/pacman.d/mirrorlist <<'ARCH_SNAPSHOT'
+Server = https://archive.archlinux.org/repos/2026/10/26/$repo/os/$arch
+ARCH_SNAPSHOT
+    pacman -Syyu --noconfirm --needed \
+      bash ca-certificates curl xz file binutils base-devel clang git bison \
+      meson ninja pkgconf go libffi expat libxml2 wayland wayland-protocols \
+      libxkbcommon pixman libinput libdrm mesa seatd systemd-libs scdoc hwdata jq zstd
+    ;;
+  alpine-3.24)
+    apk add --no-cache \
+      bash ca-certificates curl xz file binutils build-base clang git bison \
+      meson ninja pkgconf go libffi-dev expat-dev libxml2-dev wayland-dev \
+      libxkbcommon-dev pixman-dev libinput-dev libdrm-dev mesa-dev \
+      libseat-dev eudev-dev scdoc hwdata wayland-protocols jq alpine-sdk openssl util-linux zstd
+    ;;
+  *)
+    echo "Unknown TARGET_ID: $TARGET_ID" >&2
+    exit 2
+    ;;
+esac
+
+# git is installed by the target-specific package list above. The checkout is
+# bind-mounted from the hosted runner and may have a different UID; allow only
+# this source tree so Go can retain VCS metadata during automatic build stamping.
+git config --global --add safe.directory "$root"
+git -C "$root" rev-parse --is-inside-work-tree >/dev/null
+
+# The module requires Go 1.24+. Newer toolchains auto-select from go.mod
+# where the distro package's bundled toolchain is older. Keep the observed
+# toolchain in the audit report and fail clearly if Go cannot build the module.
+record_environment
+
+case "$TARGET_ID" in
+  debian-13|ubuntu-24.04|ubuntu-26.04)
+    dpkg-query -W -f='${binary:Package}\t${Version}\t${Architecture}\n' | sort > "$audit/installed-packages.tsv"
+    ;;
+  fedora-44)
+    rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n' | sort > "$audit/installed-packages.tsv"
+    ;;
+  archlinux)
+    pacman -Q | sort > "$audit/installed-packages.tsv"
+    ;;
+  alpine-3.24)
+    apk info -vv | sort > "$audit/installed-packages.tsv"
+    ;;
+esac
+
+go env GOVERSION > "$audit/go-toolchain.txt"
+
+if ! ./build.sh > "$audit/build.log" 2>&1; then
+  cat "$audit/build.log" >&2
+  exit 1
+fi
+cat "$audit/build.log"
+
+binary="build/go/cage-xtmapper"
+meson_info="build/meson/meson-info"
+test -x "$binary"
+
+file "$binary" > "$audit/elf-file.txt"
+readelf --wide --program-headers "$binary" > "$audit/elf-program-headers.txt"
+readelf --wide --dynamic "$binary" > "$audit/elf-dynamic.txt"
+if grep -Eq '\\((RPATH|RUNPATH)\\)' "$audit/elf-dynamic.txt"; then
+  cat "$audit/elf-dynamic.txt" >&2
+  echo "ELF contains an unexpected RPATH/RUNPATH; refusing audit." >&2
+  exit 1
+fi
+readelf --wide --version-info "$binary" > "$audit/elf-version-info.txt"
+
+# Safe here because this ELF was compiled from the checked-out source within
+# this same container. Package metadata must still be generated per target.
+if ! ldd "$binary" > "$audit/loader-resolution.txt" 2>&1; then
+  cat "$audit/loader-resolution.txt" >&2
+  echo "Target loader resolution failed." >&2
+  exit 1
+fi
+if grep -q 'not found' "$audit/loader-resolution.txt"; then
+  cat "$audit/loader-resolution.txt" >&2
+  echo "Target ELF has unresolved runtime dependencies." >&2
+  exit 1
+fi
+
+mkdir -p "$audit/meson"
+# Preserve dependency/link provenance even if a later packaging or license
+# check fails; this makes target-specific failures diagnosable from the artifact.
+cp build/native/pkgconfig/cage-xtmapper-native.pc "$audit/cage-xtmapper-native.pc"
+for name in intro-dependencies.json intro-buildoptions.json intro-projectinfo.json intro-compilers.json; do
+  test -f "$meson_info/$name"
+  cp "$meson_info/$name" "$audit/meson/$name"
+done
+meson introspect build/meson --dependencies > "$audit/meson/dependencies-introspect.json"
+meson introspect build/meson --buildoptions > "$audit/meson/buildoptions-introspect.json"
+ninja -C build/meson -t commands cage_xtmapper > "$audit/meson/ninja-commands.txt"
+cp build/go/build-info.json "$audit/build-info.json"
+cp build/go/provenance.txt "$audit/provenance.txt"
+cp build/native/pkgconfig/cage-xtmapper-native.pc "$audit/cage-xtmapper-native.pc"
+
+version="audit-$GITHUB_RUN_ID-$TARGET_ID"
+archive="$audit/cage-xtmapper-audit.tar"
+go run ./tools/release package --version "$version" --output "$archive"
+tar -xOf "$archive" manifest.json > "$audit/manifest.json"
+sha256sum "$binary" "$audit/manifest.json" "$archive" > "$audit/SHA256SUMS"
+
+# Create the same verified payload in the portable SteamOS/Bazzite transport
+# format. This tests archive integrity only, not runtime compatibility on-device.
+portable="$audit/cage-xtmapper-$version-linux-$(uname -m).tar.zst"
+if ! bash tools/package/build-portable.sh "$version" "$portable" > "$audit/portable-package.log" 2>&1; then
+  cat "$audit/portable-package.log" >&2
+  exit 1
+fi
+cat "$audit/portable-package.log"
+zstd -t "$portable" > "$audit/portable-zstd-test.txt"
+
+run_logged() {
+  log_name="$1"; shift
+  if ! "$@" > "$audit/$log_name.log" 2>&1; then
+    cat "$audit/$log_name.log" >&2
+    exit 1
+  fi
+}
+
+assert_installed_version() {
+  requested="$1"
+  suffix="$2"
+  case "$TARGET_ID" in
+    debian-13|ubuntu-24.04|ubuntu-26.04)
+      actual="$(dpkg-query -W -f='${Version}' cage-xtmapper)"
+      expected="$requested"
+      ;;
+    fedora-44)
+      actual="$(rpm -q --qf '%{VERSION}' cage-xtmapper)"
+      expected="$requested"
+      ;;
+    archlinux)
+      actual="$(pacman -Q cage-xtmapper | awk '{print $2}')"
+      expected="$requested-1"
+      ;;
+    alpine-3.24)
+      actual="$(awk -F: '$1 == "P" { name=$2 } $1 == "V" && name == "cage-xtmapper" { print $2; exit }' /lib/apk/db/installed)"
+      expected="$requested-r0"
+      ;;
+  esac
+  if [ "$actual" != "$expected" ]; then
+    echo "Expected installed package version $expected, found $actual on $TARGET_ID." >&2
+    exit 1
+  fi
+  printf '%s\n' "$actual" > "$audit/package-version-$suffix.txt"
+}
+
+previous_version="0.0.$((GITHUB_RUN_ID - 1))"
+package_version="0.0.$GITHUB_RUN_ID"
+
+case "$TARGET_ID" in
+  debian-13|ubuntu-24.04|ubuntu-26.04)
     arch="$(dpkg --print-architecture)"
     previous_package="$audit/cage-xtmapper_${previous_version}_${arch}.deb"
     package="$audit/cage-xtmapper_${package_version}_${arch}.deb"
     export PACKAGE_MAINTAINER="Cage XtMapper CI <ci@example.invalid>"
-
-    if ! bash tools/package/build-deb.sh "$previous_version" "$previous_package" > "$audit/deb-package-previous.log" 2>&1; then
-      cat "$audit/deb-package-previous.log" >&2
-      exit 1
-    fi
-    if ! bash tools/package/build-deb.sh "$package_version" "$package" > "$audit/deb-package-current.log" 2>&1; then
-      cat "$audit/deb-package-current.log" >&2
-      exit 1
-    fi
-    cat "$audit/deb-package-previous.log" "$audit/deb-package-current.log"
-
-    assert_deb_version() {
-      actual="$(dpkg-query -W -f='${Version}' cage-xtmapper)"
-      if [ "$actual" != "$1" ]; then
-        echo "Expected Debian package version $1, found $actual." >&2
-        exit 1
-      fi
-      printf '%s\n' "$actual"
-    }
-
-    apt-get install -y "$previous_package" > "$audit/deb-install-previous.log" 2>&1 || {
-      cat "$audit/deb-install-previous.log" >&2
-      exit 1
-    }
-    assert_deb_version "$previous_version" > "$audit/deb-version-after-install-previous.txt"
+    run_logged deb-package-previous bash tools/package/build-deb.sh "$previous_version" "$previous_package"
+    run_logged deb-package-current bash tools/package/build-deb.sh "$package_version" "$package"
+    run_logged deb-install-previous apt-get install -y "$previous_package"
+    assert_installed_version "$previous_version" deb-install-previous
     test -x /usr/bin/cage-xtmapper
-
-    apt-get install -y "$package" > "$audit/deb-upgrade.log" 2>&1 || {
-      cat "$audit/deb-upgrade.log" >&2
-      exit 1
-    }
-    assert_deb_version "$package_version" > "$audit/deb-version-after-upgrade.txt"
-
-    apt-get install -y "$package" > "$audit/deb-current-noop.log" 2>&1 || {
-      cat "$audit/deb-current-noop.log" >&2
-      exit 1
-    }
-    assert_deb_version "$package_version" > "$audit/deb-version-after-current-noop.txt"
-
-    apt-get install --allow-downgrades -y "$previous_package" > "$audit/deb-downgrade.log" 2>&1 || {
-      cat "$audit/deb-downgrade.log" >&2
-      exit 1
-    }
-    assert_deb_version "$previous_version" > "$audit/deb-version-after-downgrade.txt"
-
-    apt-get install -y "$package" > "$audit/deb-upgrade-after-downgrade.log" 2>&1 || {
-      cat "$audit/deb-upgrade-after-downgrade.log" >&2
-      exit 1
-    }
-    assert_deb_version "$package_version" > "$audit/deb-version-after-upgrade-after-downgrade.txt"
+    run_logged deb-upgrade apt-get install -y "$package"
+    assert_installed_version "$package_version" deb-upgrade
+    run_logged deb-current-noop apt-get install -y "$package"
+    assert_installed_version "$package_version" deb-current-noop
+    run_logged deb-downgrade apt-get install --allow-downgrades -y "$previous_package"
+    assert_installed_version "$previous_version" deb-downgrade
+    run_logged deb-upgrade-after-downgrade apt-get install -y "$package"
+    assert_installed_version "$package_version" deb-upgrade-after-downgrade
     dpkg --audit > "$audit/dpkg-audit-before-purge.txt"
-
-    apt-get purge -y cage-xtmapper > "$audit/deb-purge.log" 2>&1 || {
-      cat "$audit/deb-purge.log" >&2
-      exit 1
-    }
+    run_logged deb-purge apt-get purge -y cage-xtmapper
     test ! -e /usr/bin/cage-xtmapper
-    ! dpkg-query -W cage-xtmapper > "$audit/deb-query-after-purge.txt" 2>&1
+    if dpkg-query -W cage-xtmapper > "$audit/deb-query-after-purge.txt" 2>&1; then
+      echo "Debian package metadata remains after purge." >&2
+      exit 1
+    fi
     dpkg --audit > "$audit/dpkg-audit-after-purge.txt"
-
-    apt-get install -y "$package" > "$audit/deb-clean-reinstall.log" 2>&1 || {
-      cat "$audit/deb-clean-reinstall.log" >&2
-      exit 1
-    }
-    assert_deb_version "$package_version" > "$audit/deb-version-after-clean-reinstall.txt"
-    apt-get purge -y cage-xtmapper > "$audit/deb-final-purge.log" 2>&1 || {
-      cat "$audit/deb-final-purge.log" >&2
-      exit 1
-    }
+    run_logged deb-clean-reinstall apt-get install -y "$package"
+    assert_installed_version "$package_version" deb-clean-reinstall
+    run_logged deb-final-purge apt-get purge -y cage-xtmapper
     test ! -e /usr/bin/cage-xtmapper
-    echo "Debian lifecycle passed: install previous -> upgrade -> current/no-op -> explicit downgrade -> upgrade -> purge -> clean reinstall -> purge." | tee "$audit/deb-lifecycle-result.txt"
+    echo "Debian lifecycle passed: install, upgrade, current/no-op, explicit downgrade, upgrade, purge, clean reinstall, purge." | tee "$audit/deb-lifecycle-result.txt"
     ;;
 
   fedora-44)
-    previous_version="0.0.$((GITHUB_RUN_ID - 1))"
-    package_version="0.0.$GITHUB_RUN_ID"
     previous_package="$audit/cage-xtmapper-$previous_version-1.rpm"
     package="$audit/cage-xtmapper-$package_version-1.rpm"
-
-    if ! bash tools/package/build-rpm.sh "$previous_version" "$previous_package" > "$audit/rpm-package-previous.log" 2>&1; then
-      cat "$audit/rpm-package-previous.log" >&2
-      exit 1
-    fi
-    if ! bash tools/package/build-rpm.sh "$package_version" "$package" > "$audit/rpm-package-current.log" 2>&1; then
-      cat "$audit/rpm-package-current.log" >&2
-      exit 1
-    fi
-    cat "$audit/rpm-package-previous.log" "$audit/rpm-package-current.log"
-
-    assert_rpm_version() {
-      actual="$(rpm -q --qf '%{VERSION}' cage-xtmapper)"
-      if [ "$actual" != "$1" ]; then
-        echo "Expected RPM package version $1, found $actual." >&2
-        exit 1
-      fi
-      printf '%s\n' "$actual"
-    }
-
-    dnf install -y "$previous_package" > "$audit/rpm-install-previous.log" 2>&1 || {
-      cat "$audit/rpm-install-previous.log" >&2
-      exit 1
-    }
-    assert_rpm_version "$previous_version" > "$audit/rpm-version-after-install-previous.txt"
+    run_logged rpm-package-previous bash tools/package/build-rpm.sh "$previous_version" "$previous_package"
+    run_logged rpm-package-current bash tools/package/build-rpm.sh "$package_version" "$package"
+    run_logged rpm-install-previous dnf install -y "$previous_package"
+    assert_installed_version "$previous_version" rpm-install-previous
     test -x /usr/bin/cage-xtmapper
-
-    dnf install -y "$package" > "$audit/rpm-upgrade.log" 2>&1 || {
-      cat "$audit/rpm-upgrade.log" >&2
-      exit 1
-    }
-    assert_rpm_version "$package_version" > "$audit/rpm-version-after-upgrade.txt"
-
-    rpm -Uvh --replacepkgs "$package" > "$audit/rpm-current-reinstall.log" 2>&1 || {
-      cat "$audit/rpm-current-reinstall.log" >&2
-      exit 1
-    }
-    assert_rpm_version "$package_version" > "$audit/rpm-version-after-current-reinstall.txt"
-
-    rpm -Uvh --oldpackage "$previous_package" > "$audit/rpm-downgrade.log" 2>&1 || {
-      cat "$audit/rpm-downgrade.log" >&2
-      exit 1
-    }
-    assert_rpm_version "$previous_version" > "$audit/rpm-version-after-downgrade.txt"
-
-    dnf install -y "$package" > "$audit/rpm-upgrade-after-downgrade.log" 2>&1 || {
-      cat "$audit/rpm-upgrade-after-downgrade.log" >&2
-      exit 1
-    }
-    assert_rpm_version "$package_version" > "$audit/rpm-version-after-upgrade-after-downgrade.txt"
-
-    dnf remove -y cage-xtmapper > "$audit/rpm-remove.log" 2>&1 || {
-      cat "$audit/rpm-remove.log" >&2
-      exit 1
-    }
+    run_logged rpm-upgrade dnf install -y "$package"
+    assert_installed_version "$package_version" rpm-upgrade
+    run_logged rpm-current-reinstall rpm -Uvh --replacepkgs "$package"
+    assert_installed_version "$package_version" rpm-current-reinstall
+    run_logged rpm-downgrade rpm -Uvh --oldpackage "$previous_package"
+    assert_installed_version "$previous_version" rpm-downgrade
+    run_logged rpm-upgrade-after-downgrade dnf install -y "$package"
+    assert_installed_version "$package_version" rpm-upgrade-after-downgrade
+    run_logged rpm-remove dnf remove -y cage-xtmapper
     test ! -e /usr/bin/cage-xtmapper
-
-    dnf install -y "$package" > "$audit/rpm-clean-reinstall.log" 2>&1 || {
-      cat "$audit/rpm-clean-reinstall.log" >&2
-      exit 1
-    }
-    assert_rpm_version "$package_version" > "$audit/rpm-version-after-clean-reinstall.txt"
-    dnf remove -y cage-xtmapper > "$audit/rpm-final-remove.log" 2>&1 || {
-      cat "$audit/rpm-final-remove.log" >&2
-      exit 1
-    }
+    run_logged rpm-clean-reinstall dnf install -y "$package"
+    assert_installed_version "$package_version" rpm-clean-reinstall
+    run_logged rpm-final-remove dnf remove -y cage-xtmapper
     test ! -e /usr/bin/cage-xtmapper
-    echo "RPM lifecycle passed: install previous -> upgrade -> same-version reinstall -> explicit downgrade -> upgrade -> remove -> clean reinstall -> remove." | tee "$audit/rpm-lifecycle-result.txt"
+    echo "RPM lifecycle passed: install, upgrade, same-version reinstall, explicit downgrade, upgrade, remove, clean reinstall, remove." | tee "$audit/rpm-lifecycle-result.txt"
     ;;
 
   archlinux)
-    previous_version="0.0.$((GITHUB_RUN_ID - 1))"
-    package_version="0.0.$GITHUB_RUN_ID"
     machine="$(uname -m)"
     previous_package="$audit/cage-xtmapper-$previous_version-1-$machine.pkg.tar.zst"
     package="$audit/cage-xtmapper-$package_version-1-$machine.pkg.tar.zst"
-
-    if ! bash tools/package/build-arch.sh "$previous_version" "$previous_package" > "$audit/arch-package-previous.log" 2>&1; then
-      cat "$audit/arch-package-previous.log" >&2
-      exit 1
-    fi
-    if ! bash tools/package/build-arch.sh "$package_version" "$package" > "$audit/arch-package-current.log" 2>&1; then
-      cat "$audit/arch-package-current.log" >&2
-      exit 1
-    fi
-    cat "$audit/arch-package-previous.log" "$audit/arch-package-current.log"
-
-    assert_arch_version() {
-      actual="$(pacman -Q cage-xtmapper | awk '{print $2}')"
-      expected="$1-1"
-      if [ "$actual" != "$expected" ]; then
-        echo "Expected Arch package version $expected, found $actual." >&2
-        exit 1
-      fi
-      printf '%s\n' "$actual"
-    }
-
-    pacman -U --noconfirm "$previous_package" > "$audit/arch-install-previous.log" 2>&1 || {
-      cat "$audit/arch-install-previous.log" >&2
-      exit 1
-    }
-    assert_arch_version "$previous_version" > "$audit/arch-version-after-install-previous.txt"
+    run_logged arch-package-previous bash tools/package/build-arch.sh "$previous_version" "$previous_package"
+    run_logged arch-package-current bash tools/package/build-arch.sh "$package_version" "$package"
+    run_logged arch-install-previous pacman -U --noconfirm "$previous_package"
+    assert_installed_version "$previous_version" arch-install-previous
     test -x /usr/bin/cage-xtmapper
-
-    pacman -U --noconfirm "$package" > "$audit/arch-upgrade.log" 2>&1 || {
-      cat "$audit/arch-upgrade.log" >&2
-      exit 1
-    }
-    assert_arch_version "$package_version" > "$audit/arch-version-after-upgrade.txt"
-
-    pacman -U --noconfirm "$package" > "$audit/arch-current-reinstall.log" 2>&1 || {
-      cat "$audit/arch-current-reinstall.log" >&2
-      exit 1
-    }
-    assert_arch_version "$package_version" > "$audit/arch-version-after-current-reinstall.txt"
-
-    pacman -U --noconfirm "$previous_package" > "$audit/arch-downgrade.log" 2>&1 || {
-      cat "$audit/arch-downgrade.log" >&2
-      exit 1
-    }
-    assert_arch_version "$previous_version" > "$audit/arch-version-after-downgrade.txt"
-
-    pacman -U --noconfirm "$package" > "$audit/arch-upgrade-after-downgrade.log" 2>&1 || {
-      cat "$audit/arch-upgrade-after-downgrade.log" >&2
-      exit 1
-    }
-    assert_arch_version "$package_version" > "$audit/arch-version-after-upgrade-after-downgrade.txt"
-
-    pacman -Rns --noconfirm cage-xtmapper > "$audit/arch-remove.log" 2>&1 || {
-      cat "$audit/arch-remove.log" >&2
-      exit 1
-    }
+    run_logged arch-upgrade pacman -U --noconfirm "$package"
+    assert_installed_version "$package_version" arch-upgrade
+    run_logged arch-current-reinstall pacman -U --noconfirm "$package"
+    assert_installed_version "$package_version" arch-current-reinstall
+    run_logged arch-downgrade pacman -U --noconfirm "$previous_package"
+    assert_installed_version "$previous_version" arch-downgrade
+    run_logged arch-upgrade-after-downgrade pacman -U --noconfirm "$package"
+    assert_installed_version "$package_version" arch-upgrade-after-downgrade
+    run_logged arch-remove pacman -Rns --noconfirm cage-xtmapper
     test ! -e /usr/bin/cage-xtmapper
-
-    pacman -U --noconfirm "$package" > "$audit/arch-clean-reinstall.log" 2>&1 || {
-      cat "$audit/arch-clean-reinstall.log" >&2
-      exit 1
-    }
-    assert_arch_version "$package_version" > "$audit/arch-version-after-clean-reinstall.txt"
-    pacman -Rns --noconfirm cage-xtmapper > "$audit/arch-final-remove.log" 2>&1 || {
-      cat "$audit/arch-final-remove.log" >&2
-      exit 1
-    }
+    run_logged arch-clean-reinstall pacman -U --noconfirm "$package"
+    assert_installed_version "$package_version" arch-clean-reinstall
+    run_logged arch-final-remove pacman -Rns --noconfirm cage-xtmapper
     test ! -e /usr/bin/cage-xtmapper
-    echo "Pacman lifecycle passed: install previous -> upgrade -> same-version reinstall -> explicit downgrade -> upgrade -> remove -> clean reinstall -> remove." | tee "$audit/arch-lifecycle-result.txt"
+    echo "Pacman lifecycle passed: install, upgrade, same-version reinstall, explicit downgrade, upgrade, remove, clean reinstall, remove." | tee "$audit/arch-lifecycle-result.txt"
     ;;
 
   alpine-3.24)
-    previous_version="0.0.$((GITHUB_RUN_ID - 1))"
-    package_version="0.0.$GITHUB_RUN_ID"
     previous_package="$audit/cage-xtmapper-$previous_version-r0.apk"
     package="$audit/cage-xtmapper-$package_version-r0.apk"
-
-    if ! bash tools/package/build-apk.sh "$previous_version" "$previous_package" > "$audit/apk-package-previous.log" 2>&1; then
-      cat "$audit/apk-package-previous.log" >&2
-      exit 1
-    fi
-    if ! bash tools/package/build-apk.sh "$package_version" "$package" > "$audit/apk-package-current.log" 2>&1; then
-      cat "$audit/apk-package-current.log" >&2
-      exit 1
-    fi
-    cat "$audit/apk-package-previous.log" "$audit/apk-package-current.log"
-
-    assert_apk_version() {
-      actual="$(awk -F: '$1 == "P" { name=$2 } $1 == "V" && name == "cage-xtmapper" { print $2; exit }' /lib/apk/db/installed)"
-      expected="$1-r0"
-      if [ "$actual" != "$expected" ]; then
-        echo "Expected APK package version $expected, found $actual." >&2
-        exit 1
-      fi
-      printf '%s\n' "$actual"
-    }
-
-    apk add --allow-untrusted "$previous_package" > "$audit/apk-install-previous.log" 2>&1 || {
-      cat "$audit/apk-install-previous.log" >&2
-      exit 1
-    }
-    assert_apk_version "$previous_version" > "$audit/apk-version-after-install-previous.txt"
+    run_logged apk-package-previous bash tools/package/build-apk.sh "$previous_version" "$previous_package"
+    run_logged apk-package-current bash tools/package/build-apk.sh "$package_version" "$package"
+    run_logged apk-install-previous apk add --allow-untrusted "$previous_package"
+    assert_installed_version "$previous_version" apk-install-previous
     test -x /usr/bin/cage-xtmapper
-
-    apk add --allow-untrusted "$package" > "$audit/apk-upgrade.log" 2>&1 || {
-      cat "$audit/apk-upgrade.log" >&2
-      exit 1
-    }
-    assert_apk_version "$package_version" > "$audit/apk-version-after-upgrade.txt"
-
-    apk add --allow-untrusted "$package" > "$audit/apk-current-noop.log" 2>&1 || {
-      cat "$audit/apk-current-noop.log" >&2
-      exit 1
-    }
-    assert_apk_version "$package_version" > "$audit/apk-version-after-current-noop.txt"
-
-    printf '%s\n' "Skipped: Alpine documents package/version downgrade as unsupported; this test does not force downgrade by mutating APK world state. https://wiki.alpinelinux.org/wiki/Upgrading_from_older_versions" > "$audit/apk-downgrade-policy.txt"
-
-    apk del cage-xtmapper > "$audit/apk-remove.log" 2>&1 || {
-      cat "$audit/apk-remove.log" >&2
-      exit 1
-    }
+    run_logged apk-upgrade apk add --allow-untrusted "$package"
+    assert_installed_version "$package_version" apk-upgrade
+    run_logged apk-current-noop apk add --allow-untrusted "$package"
+    assert_installed_version "$package_version" apk-current-noop
+    printf '%s\n' "Skipped: Alpine documents package/version downgrade as unsupported; no APK world-state mutation attempted. https://wiki.alpinelinux.org/wiki/Upgrading_from_older_versions" > "$audit/apk-downgrade-policy.txt"
+    run_logged apk-remove apk del cage-xtmapper
     test ! -e /usr/bin/cage-xtmapper
-
-    apk add --allow-untrusted "$package" > "$audit/apk-clean-reinstall.log" 2>&1 || {
-      cat "$audit/apk-clean-reinstall.log" >&2
-      exit 1
-    }
-    assert_apk_version "$package_version" > "$audit/apk-version-after-clean-reinstall.txt"
-    apk del cage-xtmapper > "$audit/apk-final-remove.log" 2>&1 || {
-      cat "$audit/apk-final-remove.log" >&2
-      exit 1
-    }
+    run_logged apk-clean-reinstall apk add --allow-untrusted "$package"
+    assert_installed_version "$package_version" apk-clean-reinstall
+    run_logged apk-final-remove apk del cage-xtmapper
     test ! -e /usr/bin/cage-xtmapper
-    echo "APK lifecycle passed: install previous -> upgrade -> current/no-op -> remove -> clean reinstall -> remove. Explicit downgrade is not claimed." | tee "$audit/apk-lifecycle-result.txt"
+    echo "APK lifecycle passed: install, upgrade, current/no-op, remove, clean reinstall, remove. Explicit downgrade is not claimed." | tee "$audit/apk-lifecycle-result.txt"
     ;;
 esac
 
