@@ -1,0 +1,72 @@
+# Tasks: Native Linux Release Packaging and Distribution
+
+- **Spec:** [`spec.md`](./spec.md)
+- **Plan:** [`plan.md`](./plan.md)
+- **Support matrix:** [`support-matrix.md`](./support-matrix.md)
+- **Library decisions:** [`library-decision-table.md`](./library-decision-table.md)
+- **Payload contract:** [`package-contract.md`](./package-contract.md)
+- **Sprint target:** 48 hours from the sprint start
+- **Rule:** check a task only after its acceptance evidence exists; a package build alone does not complete a runtime-support task.
+
+## Phase 0 — Freeze the target and capture the evidence
+
+- [ ] **T001 [P0] Freeze reviewed baseline.** Record the exact commit/ref used by all build and package workflows. Confirm the source ref, tag and release workflow are consistent. **Done when:** the run log and manifest identify the same source commit for each candidate.
+- [ ] **T002 [P0] Pin initial target baselines.** Use these proposed candidates unless target availability forces a documented substitution: Debian 13.7; Ubuntu 24.04.5 LTS and 26.04.1 LTS; Fedora 44; Arch repository snapshot dated 2026-10-27; Alpine 3.24.3; SteamOS stable with SteamOS 3.9.5 as the candidate (confirm the actual device build); Bazzite stable 44.20261026 (record the full image identity). Record architecture and image digest/snapshot where available. **Done when:** the support matrix contains no unresolved “latest” labels and reports the exact builds actually tested.
+- [x] **T003 [P0] Retain CI build artifacts.** Update the non-publishing CI path to retain the ELF, `build/go/build-info.json`, release `manifest.json`, provenance, Meson introspection, `ninja -t commands`/link contract and raw audit reports. **Done when:** a CI run exposes downloadable artifacts with commit and architecture identifiers.
+- [x] **T004 [P0] Add ELF/dependency audit.** Capture `file`, `readelf -l`, `readelf -d`, `readelf --version-info`, and controlled target-loader resolution/transitive dependencies. Fail the audit on unexpected RPATH/RUNPATH or unidentified required dependencies. **Done when:** each available architecture has a human-readable report and machine-readable summary.
+- [x] **T005 [P0] Produce library decision table.** For each built target, classify each relevant library as `system`, `bundle candidate`, `exclude from bundle`, or `external runtime prerequisite`; attach reasoning/evidence. **Done when:** no library is bundled or excluded merely because it appears in a generic build-dependency list.
+
+## Phase 1 — Native package foundations
+
+- [x] **T006 [P0] Define a shared package payload contract.** Specify package version, architecture, executable path, license/notice placement, config/data paths, external prerequisites, manifest/provenance and checksum files. Keep package-owned paths distinct from `/opt/cage-xtmapper` and `/usr/local/bin/cage-xtmapper`. **Done when:** every adapter consumes the same documented contract and the legacy installer ownership rules remain explicit.
+- [ ] **T007 [P0] Build Debian package.** Add a Debian packaging recipe and produce `.deb` for each selected Debian/Ubuntu baseline/architecture. Generate dependencies using Debian-native tooling and validate with `dpkg-deb`/`dpkg-shlibdeps` as applicable. **Done when:** metadata and contents validate, clean install resolves dependencies, application launch passes its available smoke test, and removal leaves no package-owned residue.
+- [ ] **T008 [P0] Build Ubuntu package checks.** Run the Debian package path on the selected Ubuntu baseline(s); do not assume Debian success proves Ubuntu compatibility. **Done when:** dependency solving, install, update/version selection and removal are recorded for every declared Ubuntu row.
+- [ ] **T009 [P0] Build Fedora RPM.** Add a target-native RPM recipe with correct version, architecture, file ownership and dependency metadata; use the ecosystem's generated dependency mechanisms where appropriate. **Done when:** `rpmbuild`/package lint and clean DNF install/remove checks pass on selected Fedora target(s).
+- [ ] **T010 [P0] Build Arch package and PKGBUILD.** Add a pinned source identity, checksums, dependency declarations and package-content checks; build a versioned Pacman package. Treat AUR publication as a separate owner/community workflow. **Done when:** `makepkg` validation and target package install/remove checks pass for x86_64, or the unresolved failure is documented.
+- [ ] **T011 [P0] Build Alpine musl target.** Build the full application in an Alpine-compatible environment with musl and produce an APKBUILD / `.apk`. Do not reuse the glibc artifact by renaming it. **Done when:** ELF interpreter/ABI is appropriate, `apk` metadata validates, and clean install/run/remove checks pass on the selected Alpine target.
+- [ ] **T012 [P0] Run native lifecycle tests.** For Debian/Ubuntu/Fedora/Arch/Alpine packages, test install, upgrade, explicit downgrade where supported, no-op/current version, removal and clean reinstall. **Done when:** results record installed versions and exit status per support-matrix row.
+
+## Phase 2 — SteamOS, Bazzite, and portable packaging
+
+- [ ] **T013 [P0] Build SteamOS Flatpak candidate.** Add a pinned Flatpak manifest/runtime and document only required permissions/host integrations. **Done when:** the Flatpak builds, validates and can be downloaded by exact release tag; it remains `Experimental` until session/runtime tests pass.
+- [ ] **T014 [P0] Build SteamOS portable archive.** Provide a versioned portable archive with a non-root/default user-local install path and explicit update/remove instructions; avoid mandatory SteamOS base-image mutation. **Done when:** archive metadata and install/update/remove scripts or docs are tested independently of `install.sh`.
+- [ ] **T015 [P0] Test SteamOS device/session integration.** Test Flatpak and portable archive separately in Steam Deck Desktop Mode and the intended Gaming Mode route, including Wayland/Gamescope environment, graphics, Waydroid transport and input. **Done when:** evidence identifies hardware/image/software versions and every passed/failed test; no `Supported` claim without it.
+- [ ] **T016 [P0] Build Bazzite RPM.** Produce and validate a versioned RPM with correct dependencies and document layering/reboot implications. **Done when:** RPM metadata, install method, launch smoke test and removal/version behavior are recorded on the selected Bazzite version.
+- [ ] **T017 [P0] Evaluate Bazzite portable format.** Test AppImage with a per-library bundle/exclude report; if any necessary host-coupled dependency or platform integration remains incompatible, use `.tar.zst`. **Done when:** the selected format has tested version replacement/update/remove behavior and a rationale for choosing AppImage or `.tar.zst`.
+- [ ] **T018 [P0] Test Bazzite session integration.** Verify Wayland/compositor, graphics, Waydroid, user permissions, and package/portable path coexistence. **Done when:** RPM and portable artifacts have independent evidence and independent support statuses.
+
+## Phase 3 — CI/CD, migration, integrity, documentation
+
+- [ ] **T019 [P0] Expand packaging CI matrix.** Add package build jobs and candidate artifacts for the seven target families; use appropriate native runners/containers and record exact baselines. **Done when:** PR/branch builds validate packaging without publishing official assets.
+- [ ] **T020 [P0] Add package contents/dependency gates.** Validate package paths, architecture, version identity, dependency metadata, licenses/notices, checksum generation and clean-environment installability. **Done when:** invalid or mismatched artifact metadata causes CI failure.
+- [ ] **T021 [P0] Test migration from bootstrap ownership.** Test the existing `/opt/cage-xtmapper` + `/usr/local/bin/cage-xtmapper` installation alongside package installation. Preserve unknown files and avoid path/file conflicts. **Done when:** migration behavior is explicit, repeatable, reversible where promised, and tested before packages become the default.
+- [ ] **T022 [P0] Add version-accurate release asset index.** List every artifact by exact tag, distro/version, architecture, format and support status; keep checksums and source identity with each release. **Done when:** automated validation detects missing assets or name/version/architecture mismatches.
+- [ ] **T023 [P0] Preserve draft-first release flow.** Attach package candidates and checksums to the correct tag; prevent overwrite of already-published tag assets and leave the release as draft for review. **Done when:** end-to-end dry-run/candidate workflow demonstrates correct names and no publication to package repositories.
+- [ ] **T024 [P0] Add lifecycle/downgrade documentation.** Document per-ecosystem install, update, exact older-version selection, removal and known limitations. **Done when:** commands match tested package-manager behavior and do not imply AUR-only packages update through an unconfigured binary repository.
+- [x] **T025 [P0] Add support matrix and evidence links.** Map all seven distribution families by baseline version, architecture, artifact and status. **Done when:** `Supported` cells link to passing build/package/runtime evidence; untested cells remain `Experimental` or `Unavailable`.
+- [ ] **T026 [P0] Review notices and external prerequisites.** Verify bundled-component licenses, Go/native license notices, Waydroid and XtMapper APK prerequisites, privilege requirements and session expectations. **Done when:** each published artifact includes required notices and documentation lists unsatisfied prerequisites.
+
+## Phase 4 — Maintainer-gated follow-up (do not assume approval)
+
+- [ ] **T027 [P1 / maintainer approval] Decide hosting and operations.** Present provider-neutral choices and costs for APT, RPM/DNF, Pacman and APK repositories. **Done when:** maintainer records which ecosystems, if any, will have a signed native repository and who operates it.
+- [ ] **T028 [P1 / maintainer approval] Approve production signing and recovery model.** Decide key ownership, protected CI usage, rotation/revocation, recovery and provenance expectations. **Done when:** written policy exists before any production signing key is created or used.
+- [ ] **T029 [P1 / after T027–T028] Implement signed repositories.** Build and test repository metadata, signatures, client trust setup, install/update/remove and key failure cases only for approved ecosystems. **Done when:** clean clients verify repository metadata and packages and documented revocation/recovery paths are tested.
+
+## Sprint exit checklist
+
+- [ ] Every family has a candidate install path and an accurate `Supported` / `Experimental` / `Unavailable` status.
+- [ ] Each `Supported` claim has target-specific package, dependency, lifecycle and runtime evidence.
+- [ ] SteamOS and Bazzite device/session tests have evidence or are explicitly blocked, not assumed.
+- [ ] All artifacts are version/architecture-identifiable, checksummed and attached to the correct draft release.
+- [ ] No production repository/key action was taken without maintainer approval.
+- [ ] Remaining blockers are listed with an owner and a next action.
+
+## Execution evidence snapshot — 2026-10-27
+
+The latest fully successful target-native audit used source commit 9db78c2b1f2827bad631988edb7f6f99a1484b96 in [run 40501883064](https://github.com/SoufianoDev/cage-xtmapper/actions/runs/40501883064). All six target jobs passed: Debian 13.7, Ubuntu 24.04.5, Ubuntu 26.04.1, Fedora 44, Arch Linux using the 2026-10-26 archive snapshot, and Alpine 3.24.3. Each target artifact retains the ELF, loader-resolution report, manifest, build info, provenance, Meson dependency/build-option introspection, link commands, installed-package inventory, package candidate, lifecycle logs and checksums. The artifact environment records source_commit and workflow_sha as the tested commit.
+
+The matching [Validate build inputs run 40501883118](https://github.com/SoufianoDev/cage-xtmapper/actions/runs/40501883118) passed both amd64 and arm64 jobs. Its downloadable ELF/audit artifacts are [amd64](https://github.com/SoufianoDev/cage-xtmapper/actions/runs/40501883118/artifacts/12733331913) and [arm64](https://github.com/SoufianoDev/cage-xtmapper/actions/runs/40501883118/artifacts/12733177198).
+
+T003 and T004 are checked based on the retained artifacts and the enforced ELF audit: the audit fails on RPATH/RUNPATH, loader-resolution failures or unresolved libraries. T005 is checked because the per-target shared-library classifications and evidence are in library-decision-table.md. T006 is checked because package-contract.md documents the shared payload contract and verified package path/ownership rules. T025 is checked because support-matrix.md records every target family, architecture/artifact status and the corresponding CI evidence.
+
+Do not infer a Supported status from these results. The passing package lifecycle currently covers build/package metadata plus install/remove smoke tests. Executable startup in a real Wayland/graphics session, package upgrade/downgrade/reinstall lifecycle, legacy-install migration, Steam Deck Desktop/Gaming Mode, and Bazzite-host testing remain incomplete. The native packages are CI artifacts, not public-release assets. The current release workflow still publishes only the older archive/installer asset set. SteamOS Flatpak, Bazzite AppImage, and signed distribution repositories have not been implemented; production signing and hosting remain maintainer-gated.

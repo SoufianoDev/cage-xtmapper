@@ -1,0 +1,42 @@
+# Linux Support Matrix — Cage XtMapper
+
+**Evidence snapshot:** 2026-10-27. The latest fully successful target-native audit is [workflow run 40501883064](https://github.com/SoufianoDev/cage-xtmapper/actions/runs/40501883064), source commit **9db78c2b1f2827bad631988edb7f6f99a1484b96**. All six target jobs passed. The matching multi-architecture build/audit run [40501883118](https://github.com/SoufianoDev/cage-xtmapper/actions/runs/40501883118) passed both amd64 and arm64.
+
+## Status rules
+
+- **Supported** — build, package metadata, dependency resolution, lifecycle, executable startup and required host/session integration tests all pass for the exact row.
+- **Experimental** — a candidate exists and some CI/package gates pass, but required lifecycle/runtime/target-host proof remains missing.
+- **Unavailable** — no viable artifact has been built and validated for that exact format/target cell.
+
+**No target is Supported yet.** The successful jobs prove repeatable builds, ELF/dependency inspection and package install/remove smoke tests in containers. They do not prove Cage XtMapper starts correctly inside a real Wayland/graphics session or that Waydroid input and privileges work.
+
+## Native package candidates
+
+| Target baseline actually observed | Architecture | Candidate format | Status | Verified evidence | Missing gates |
+|---|---|---|---|---|---|
+| Debian 13.7 (Trixie), image digest debian@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad | amd64 | .deb | **Experimental** | [Artifact](https://github.com/SoufianoDev/cage-xtmapper/actions/runs/40501883064/artifacts/12732528840); package metadata and dependency resolution; install/remove smoke passed. ELF interpreter is /lib64/ld-linux-x86-64.so.2; highest imported GLIBC symbol version is GLIBC_2.38. | Real app launch; upgrade/downgrade/reinstall; legacy migration; runtime/session test. |
+| Ubuntu 24.04.5 LTS, image digest ubuntu@sha256:24737cef17f4e22b1977df7d9a05e77c4e28b7da5b8911f8d8ccda136bf3573c | amd64 | .deb | **Experimental** | [Artifact](https://github.com/SoufianoDev/cage-xtmapper/actions/runs/40501883064/artifacts/12733182242); package metadata and dependency resolution; install/remove smoke passed. Highest imported GLIBC symbol version is GLIBC_2.38. | Real app launch; upgrade/downgrade/reinstall; legacy migration; runtime/session test. |
+| Ubuntu 26.04.1 LTS, image digest ubuntu@sha256:19fcd1bf268f02b60aca3bd30bd8a6d9a11759a430e32921833e65f16d87348a | amd64 | .deb | **Experimental** | [Artifact](https://github.com/SoufianoDev/cage-xtmapper/actions/runs/40501883064/artifacts/12733137185); package metadata and dependency resolution; install/remove smoke passed. Highest imported GLIBC symbol version is GLIBC_2.43. | Real app launch; upgrade/downgrade/reinstall; legacy migration; runtime/session test. |
+| Fedora Linux 44, image digest fedora@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80 | x86_64 | .rpm | **Experimental** | [Artifact](https://github.com/SoufianoDev/cage-xtmapper/actions/runs/40501883064/artifacts/12732508893); RPM native SONAME/symbol requirements generated; install/remove smoke passed. Highest imported GLIBC symbol version is GLIBC_2.43. | Real app launch; update/downgrade; package lint; runtime/session test. |
+| Arch Linux image VERSION_ID=20261018.0.612668, digest archlinux@sha256:3cbf69d2d5958d6a294f3722c5668e6187c4df8e00fa27f72352f0bf83e495e1; repository snapshot 2026-10-26 | x86_64 | .pkg.tar.zst + PKGBUILD | **Experimental** | [Artifact](https://github.com/SoufianoDev/cage-xtmapper/actions/runs/40501883064/artifacts/12732419126); package metadata and dependency owners validated; Pacman install/remove smoke passed. | Real app launch; upgrade/downgrade/reinstall; longer-term rolling-release compatibility. |
+| Alpine Linux 3.24.3, image digest alpine@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a | x86_64 | .apk built against musl | **Experimental** | [Artifact](https://github.com/SoufianoDev/cage-xtmapper/actions/runs/40501883064/artifacts/12732583540); interpreter /lib/ld-musl-x86_64.so.1; no GLIBC symbol imports; APK install/remove smoke passed using a CI-only ephemeral key. | Real app launch; update/downgrade/reinstall; production trust/signature policy; Alpine session/runtime test. |
+
+The target audit currently builds native package candidates for **amd64/x86_64 only**. The main Ubuntu 26.04 validation workflow builds/audits amd64 and arm64 ELF artifacts, but that is not equivalent to a native arm64 .deb, .rpm, Pacman or APK lifecycle test. Native package cells for Debian/Ubuntu/Fedora/Alpine arm64 and Arch architectures other than x86_64 remain **Unavailable** in this candidate matrix.
+
+## SteamOS and Bazzite
+
+| Target candidate | Format/path | Status | Evidence and remaining blocker |
+|---|---|---|---|
+| SteamOS Stable, SteamOS 3.9.5 candidate; the actual Steam Deck build has not been captured | Flatpak | **Unavailable** | No Flatpak manifest or Flatpak build job exists. SteamOS 3.9.5 is a candidate based on the [official Steam Deck announcement from 23 October 2026](https://steamcommunity.com/app/1675200/announcements/); it is not a tested device identity. |
+| SteamOS Stable, SteamOS 3.9.5 candidate | SteamOS-targeted portable archive | **Unavailable** | Generic .tar.zst archives are produced by other distro containers, but no SteamOS-target build or Steam Deck Desktop/Gaming Mode test exists. They must not be presented as SteamOS-ready assets. |
+| Bazzite Stable 44.20261026 candidate | RPM | **Experimental** | A Fedora 44 RPM candidate exists, but it has not been installed or tested against the Bazzite image itself. See the [official Bazzite release](https://github.com/ublue-os/bazzite/releases/tag/44.20261026). |
+| Bazzite Stable 44.20261026 candidate | Portable .tar.zst | **Experimental** | A portable archive is generated in the Fedora target job, but the exact Bazzite image, Wayland/Gamescope session, graphics and Waydroid integration have not been tested. |
+| Bazzite Stable 44.20261026 candidate | AppImage | **Unavailable** | No AppImage recipe/artifact exists. The approved policy prefers .tar.zst unless AppImage passes the host-library and actual runtime tests. |
+
+## Evidence interpretation
+
+The audited container images are pinned by digest. Arch's 2026-10-27 archive path returned HTTP 404, so the workflow uses the available 2026-10-26 snapshot and records that value in environment.txt. The Debian target records the version file value 13.7. Ubuntu's /etc/debian_version reports Debian-base codenames rather than an Ubuntu point release; the Ubuntu version is therefore taken from /etc/os-release (24.04.5 LTS / 26.04.1 LTS).
+
+The Debian/Ubuntu .deb builds use dpkg-shlibdeps; Fedora RPM requirements are generated from the actual ELF; Arch maps SONAMEs to installed package owners; Alpine's APK metadata declares detected so: dependencies. Full direct dependencies, symbol-version records and transitive loader reports are in each artifact above and in [library-decision-table.md](./library-decision-table.md). No current portable archive bundles shared .so files.
+
+The candidate .deb, .rpm, Arch and .apk artifacts are retained as GitHub Actions artifacts only. They have **not** been attached to a tagged Release. The current release workflow remains the legacy .tar and installer path. SHA-256 files provide integrity checks, not publisher authentication. No production signing keys or package repositories were created or published.
