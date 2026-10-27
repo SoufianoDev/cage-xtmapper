@@ -56,6 +56,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up pinned Go toolchain for glibc target containers
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+
+      - name: Record host Go root
+        run: echo "HOST_GO_ROOT=$(go env GOROOT)" >> "$GITHUB_ENV"
+
       - name: Prepare audit output directory
         env:
           TARGET: ${{ matrix.target }}
@@ -69,15 +77,31 @@ jobs:
           set -euo pipefail
           output="build/target-audit/$TARGET"
           docker pull "$IMAGE"
-          docker run --rm --platform linux/amd64 \
-            -e TARGET_ID="$TARGET" \
-            -e TARGET_IMAGE="$IMAGE" \
-            -e TARGET_ARCH=amd64 \
-            -e GITHUB_RUN_ID="$GITHUB_RUN_ID" \
-            -e GITHUB_SHA="$GITHUB_SHA" \
-            -v "$GITHUB_WORKSPACE:/src" \
-            -w /src \
-            "$IMAGE" sh tools/ci/target-build-audit.sh 2>&1 | tee "$output/container.log"
+          common_args=(
+            run --rm --platform linux/amd64
+            -e TARGET_ID="$TARGET"
+            -e TARGET_IMAGE="$IMAGE"
+            -e TARGET_ARCH=amd64
+            -e GITHUB_RUN_ID="$GITHUB_RUN_ID"
+            -e GITHUB_SHA="$GITHUB_SHA"
+            -v "$GITHUB_WORKSPACE:/src"
+            -w /src
+          )
+
+          if [[ "$TARGET" == "alpine-3.24" ]]; then
+            # Alpine deliberately uses its own musl-native Go toolchain.
+            docker "${common_args[@]}" "$IMAGE" sh tools/ci/target-build-audit.sh 2>&1 | tee "$output/container.log"
+          else
+            # Distro packages in older glibc images may ship Go < 1.24.
+            # Mount the pinned official toolchain from setup-go into the
+            # container; GOTOOLCHAIN=local prevents a network toolchain swap.
+            docker "${common_args[@]}" \
+              -v "$HOST_GO_ROOT:/host-go:ro" \
+              -e GOROOT=/host-go \
+              -e GOTOOLCHAIN=local \
+              -e PATH=/host-go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+              "$IMAGE" sh tools/ci/target-build-audit.sh 2>&1 | tee "$output/container.log"
+          fi
 
       - name: Upload target audit evidence
         if: always()
