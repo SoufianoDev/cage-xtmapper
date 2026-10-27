@@ -68,7 +68,7 @@ case "$TARGET_ID" in
       bash ca-certificates curl xz file binutils build-base clang git bison \
       meson ninja pkgconf go libffi-dev expat-dev libxml2-dev wayland-dev \
       libxkbcommon-dev pixman-dev libinput-dev libdrm-dev mesa-dev \
-      libseat-dev eudev-dev scdoc hwdata wayland-protocols jq alpine-sdk openssl
+      libseat-dev eudev-dev scdoc hwdata wayland-protocols jq alpine-sdk openssl util-linux
     ;;
   *)
     echo "Unknown TARGET_ID: $TARGET_ID" >&2

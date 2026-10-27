@@ -129,16 +129,25 @@ chown -R cagepackager:abuild "$home" "$work"
 chmod 0600 "$home/.abuild/cage-xtmapper-ci.rsa"
 export PACKAGER="Cage XtMapper CI <ci@example.invalid>"
 export PACKAGER_PRIVKEY="$home/.abuild/cage-xtmapper-ci.rsa"
-export PKGDEST="$tmp/packages"
-mkdir -p "$PKGDEST"
-chown -R cagepackager:abuild "$PKGDEST"
+export REPODEST="$tmp/packages"
+mkdir -p "$REPODEST"
+chown -R cagepackager:abuild "$REPODEST"
+# abuild normally reads PACKAGER and PACKAGER_PRIVKEY from /etc/abuild.conf.
+# This is a disposable container; append an ephemeral CI-only config instead
+# of reusing or modifying any real publisher key/configuration.
+cat >> /etc/abuild.conf <<ABUILD_CONFIG
+PACKAGER="$PACKAGER"
+PACKAGER_PRIVKEY="$PACKAGER_PRIVKEY"
+REPODEST="$REPODEST"
+ABUILD_CONFIG
+chmod 0644 /etc/abuild.conf
 
-if ! (cd "$work" && runuser -u cagepackager -- env HOME="$home" PACKAGER="$PACKAGER" PACKAGER_PRIVKEY="$PACKAGER_PRIVKEY" PKGDEST="$PKGDEST" abuild -F) > "$tmp/abuild.log" 2>&1; then
+if ! (cd "$work" && runuser -u cagepackager -- env HOME="$home" PACKAGER="$PACKAGER" PACKAGER_PRIVKEY="$PACKAGER_PRIVKEY" REPODEST="$REPODEST" abuild -F) > "$tmp/abuild.log" 2>&1; then
   cat "$tmp/abuild.log" >&2
   exit 1
 fi
 cat "$tmp/abuild.log"
-apk_file=$(find "$PKGDEST" -type f -name 'cage-xtmapper-*.apk' -print -quit)
+apk_file=$(find "$REPODEST" -type f -name 'cage-xtmapper-*.apk' -print -quit)
 [[ -n "$apk_file" && -s "$apk_file" ]] || { echo "abuild produced no APK." >&2; exit 1; }
 mkdir -p "$(dirname -- "$output")"
 cp "$apk_file" "$output"

@@ -138,6 +138,9 @@ sed \
 if ! id cagepackager >/dev/null 2>&1; then
   useradd --create-home --shell /bin/bash cagepackager
 fi
+# mktemp creates a private 0700 parent. Permit traversal to the explicitly
+# named, user-owned work tree so makepkg can create its configured BUILDDIR.
+chmod 0711 "$tmp"
 chown -R cagepackager:cagepackager "$work"
 if ! (cd "$work" && runuser -u cagepackager -- makepkg --noconfirm) > "$tmp/makepkg.log" 2>&1; then
   cat "$tmp/makepkg.log" >&2

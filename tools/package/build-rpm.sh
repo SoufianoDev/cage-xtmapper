@@ -72,6 +72,7 @@ if jq -e 'any(.licenses[]?; (.license | test("GPL-3")))' "$manifest" >/dev/null;
 fi
 
 cat > "$top/SPECS/cage-xtmapper.spec" <<SPEC
+%global debug_package %{nil}
 Name:           cage-xtmapper
 Version:        $version
 Release:        1%{?dist}
