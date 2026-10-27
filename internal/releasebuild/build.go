@@ -165,6 +165,7 @@ func licenseTexts(repo, binary string, archives []string) ([]release.License, ma
 		"/usr/share/doc/go/copyright",
 		"/usr/share/licenses/go/LICENSE",
 		"/usr/share/licenses/golang/LICENSE",
+		filepath.Join(repo, "internal/releasebuild/licenses/Go-LICENSE.txt"),
 	)
 	if err != nil {
 		return nil, nil, err

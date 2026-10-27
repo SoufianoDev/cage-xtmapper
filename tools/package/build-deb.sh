@@ -93,7 +93,24 @@ cp -a "$payload_dir/LICENSES/." "$doc_dir/licenses/"
 } > "$doc_dir/copyright"
 
 mkdir -p "$package_root/DEBIAN"
-substvars=$(dpkg-shlibdeps -O -e "$package_root/usr/bin/cage-xtmapper")
+# dpkg-shlibdeps consults debian/control even when output is sent to
+# stdout. Use an isolated temporary source package so this helper does not
+# require Debian packaging metadata in the application repository.
+mkdir -p "$tmp/debian"
+cat > "$tmp/debian/control" <<CONTROL
+Source: cage-xtmapper
+Section: x11
+Priority: optional
+Maintainer: $PACKAGE_MAINTAINER
+Build-Depends: dpkg-dev
+Standards-Version: 4.6.2
+
+Package: cage-xtmapper
+Architecture: any
+Description: Cage-based Wayland session for XtMapper
+ Native Cage/wlroots executable integrated with the XtMapper Android app.
+CONTROL
+substvars=$(cd "$tmp" && dpkg-shlibdeps -O -e "$package_root/usr/bin/cage-xtmapper")
 depends=$(printf '%s\n' "$substvars" | sed -n 's/^shlibs:Depends=//p')
 [[ -n "$depends" ]] || {
   printf 'dpkg-shlibdeps did not return a Depends field:\n%s\n' "$substvars" >&2
