@@ -14,6 +14,8 @@ jobs:
     outputs:
       package_version: ${{ steps.validate.outputs.package_version }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Validate release tag and native package version
         id: validate
         env:
@@ -21,15 +23,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! "$RELEASE_TAG" =~ ^v([0-9]{8}|[0-9]+[.][0-9]+[.][0-9]+)$ ]]; then
-            echo "Release tag must be vYYYYMMDD-style numeric or vMAJOR.MINOR.PATCH; got $RELEASE_TAG" >&2
-            exit 2
-          fi
-          package_version="$(printf '%s' "$RELEASE_TAG" | sed 's/^v//')"
-          if [[ "$package_version" == "0.0.0" ]]; then
-            echo "v0.0.0 has no lower numeric package version for lifecycle testing." >&2
-            exit 2
-          fi
+          package_version="$(bash tools/ci/validate-release-tag.sh "$RELEASE_TAG")"
           echo "package_version=$package_version" >> "$GITHUB_OUTPUT"
 
   package:

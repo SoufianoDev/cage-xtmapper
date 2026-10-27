@@ -81,6 +81,7 @@ jobs:
           bash tests/test-install-deps.sh
           bash tests/test-build.sh
           bash tests/test-launcher.sh
+          bash tests/test-release-tag.sh
 
       - name: Build the single ELF
         run: ./build.sh
