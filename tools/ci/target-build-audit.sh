@@ -42,7 +42,7 @@ case "$TARGET_ID" in
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
     apt-get install -y --no-install-recommends \
-      bash ca-certificates curl xz-utils file binutils git clang bison \
+      bash ca-certificates curl xz-utils file binutils git clang bison jq dpkg-dev \
       meson ninja-build pkg-config golang-go libffi-dev libexpat1-dev \
       libxml2-dev libwayland-dev libseat-dev libxkbcommon-dev \
       libpixman-1-dev libudev-dev libinput-dev libdrm-dev \
@@ -128,5 +128,35 @@ archive="$audit/cage-xtmapper-audit.tar"
 go run ./tools/release package --version "$version" --output "$archive"
 tar -xOf "$archive" manifest.json > "$audit/manifest.json"
 sha256sum "$binary" "$audit/manifest.json" "$archive" > "$audit/SHA256SUMS"
+
+case "$TARGET_ID" in
+  debian-13|ubuntu-24.04|ubuntu-26.04)
+    package_version="0~ci$GITHUB_RUN_ID"
+    package="$audit/cage-xtmapper_${package_version}_$(dpkg --print-architecture).deb"
+    export PACKAGE_MAINTAINER="Cage XtMapper CI <ci@example.invalid>"
+    if ! bash tools/package/build-deb.sh "$package_version" "$package" > "$audit/deb-package.log" 2>&1; then
+      cat "$audit/deb-package.log" >&2
+      exit 1
+    fi
+    cat "$audit/deb-package.log"
+    # This disposable diagnostic package has a reserved example.invalid contact
+    # and is never attached to a release. It exists to test native metadata and
+    # dependency resolution only; release packages require an approved identity.
+    if ! apt-get install -y "$package" > "$audit/deb-install.log" 2>&1; then
+      cat "$audit/deb-install.log" >&2
+      exit 1
+    fi
+    dpkg-query -W -f='${Status}\n' cage-xtmapper | grep -Fx 'install ok installed'
+    test -x /usr/bin/cage-xtmapper
+    dpkg --audit > "$audit/dpkg-audit-after-install.txt"
+    if ! apt-get remove -y cage-xtmapper > "$audit/deb-remove.log" 2>&1; then
+      cat "$audit/deb-remove.log" >&2
+      exit 1
+    fi
+    test ! -e /usr/bin/cage-xtmapper
+    dpkg --audit > "$audit/dpkg-audit-after-remove.txt"
+    echo "Debian package install/remove smoke test passed." | tee "$audit/deb-lifecycle-result.txt"
+    ;;
+esac
 
 echo "Target audit completed: $TARGET_ID ($TARGET_ARCH)"
