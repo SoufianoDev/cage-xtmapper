@@ -59,10 +59,10 @@ case "$TARGET_ID" in
       systemd-devel hwdata scdoc wayland-protocols-devel rpm-build jq zstd
     ;;
   archlinux)
-    [[ "${TARGET_REPO_SNAPSHOT:-}" == "2026-10-26" ]] || {
+    if [ "${TARGET_REPO_SNAPSHOT:-}" != "2026-10-26" ]; then
       echo "TARGET_REPO_SNAPSHOT must equal 2026-10-26 for this pinned audit." >&2
       exit 2
-    }
+    fi
     cat > /etc/pacman.d/mirrorlist <<'ARCH_SNAPSHOT'
 Server = https://archive.archlinux.org/repos/2026/10/26/$repo/os/$arch
 ARCH_SNAPSHOT
