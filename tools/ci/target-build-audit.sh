@@ -7,6 +7,21 @@ set -eu
 : "${GITHUB_SHA:=unknown}"
 : "${TARGET_ARCH:=amd64}"
 
+if [ -n "${PACKAGE_VERSION:-}" ]; then
+  case "$PACKAGE_VERSION" in
+    *[!0-9.]*|.*|*.)
+      echo "PACKAGE_VERSION must contain only numeric dot-separated components: $PACKAGE_VERSION" >&2
+      exit 2
+      ;;
+  esac
+  case "$PACKAGE_VERSION" in
+    *..*)
+      echo "PACKAGE_VERSION must not contain empty components: $PACKAGE_VERSION" >&2
+      exit 2
+      ;;
+  esac
+fi
+
 root=$(pwd -P)
 audit="$root/build/target-audit/$TARGET_ID"
 mkdir -p "$audit"
@@ -42,6 +57,7 @@ record_environment() {
     echo "source_commit=$(git rev-parse HEAD 2>/dev/null || echo unknown)"
     echo "workflow_sha=$GITHUB_SHA"
     echo "workflow_run_id=$GITHUB_RUN_ID"
+    echo "requested_package_version=${PACKAGE_VERSION:-ci-default}"
     uname -a
     cat /etc/os-release
     if [ -r /etc/debian_version ]; then
@@ -183,7 +199,7 @@ cp build/go/build-info.json "$audit/build-info.json"
 cp build/go/provenance.txt "$audit/provenance.txt"
 cp build/native/pkgconfig/cage-xtmapper-native.pc "$audit/cage-xtmapper-native.pc"
 
-version="audit-$GITHUB_RUN_ID-$TARGET_ID"
+version="${PACKAGE_VERSION:-audit-$GITHUB_RUN_ID-$TARGET_ID}"
 archive="$audit/cage-xtmapper-audit.tar"
 go run ./tools/release package --version "$version" --output "$archive"
 tar -xOf "$archive" manifest.json > "$audit/manifest.json"
@@ -298,7 +314,7 @@ assert_removed() {
 }
 
 previous_version="0.0.$((GITHUB_RUN_ID - 1))"
-package_version="0.0.$GITHUB_RUN_ID"
+package_version="${PACKAGE_VERSION:-0.0.$GITHUB_RUN_ID}"
 
 case "$TARGET_ID" in
   debian-13|ubuntu-24.04|ubuntu-26.04)
