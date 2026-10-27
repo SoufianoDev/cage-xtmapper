@@ -83,6 +83,7 @@ jobs:
           bash tests/test-launcher.sh
           bash tests/test-release-tag.sh
           bash tests/test-release-workflow.sh
+          bash tests/test-release-index.sh
 
       - name: Build the single ELF
         run: ./build.sh
