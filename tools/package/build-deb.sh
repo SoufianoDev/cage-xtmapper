@@ -93,6 +93,17 @@ cp -a "$payload_dir/LICENSES/." "$doc_dir/licenses/"
 } > "$doc_dir/copyright"
 
 mkdir -p "$package_root/DEBIAN"
+cat > "$package_root/DEBIAN/preinst" <<'PREINST'
+#!/bin/sh
+set -eu
+if [ -e /opt/cage-xtmapper ] || [ -L /opt/cage-xtmapper ] || [ -e /usr/local/bin/cage-xtmapper ] || [ -L /usr/local/bin/cage-xtmapper ]; then
+  echo "Refusing to install cage-xtmapper .deb: a bootstrap-managed or local installation may shadow /usr/bin/cage-xtmapper." >&2
+  echo "Remove the previous managed installation deliberately, then retry." >&2
+  exit 1
+fi
+PREINST
+chmod 0755 "$package_root/DEBIAN/preinst"
+
 # dpkg-shlibdeps consults debian/control even when output is sent to
 # stdout. Use an isolated temporary source package so this helper does not
 # require Debian packaging metadata in the application repository.

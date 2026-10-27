@@ -55,20 +55,20 @@ case "$TARGET_ID" in
       libxml2-devel wayland-devel libxkbcommon-devel pixman-devel \
       libinput-devel libdrm-devel libdisplay-info-devel libliftoff-devel \
       mesa-libEGL-devel mesa-libGLES-devel mesa-libgbm-devel libseat-devel \
-      systemd-devel hwdata scdoc wayland-protocols-devel
+      systemd-devel hwdata scdoc wayland-protocols-devel rpm-build jq
     ;;
   archlinux)
     pacman -Syu --noconfirm --needed \
       bash ca-certificates curl xz file binutils base-devel clang git bison \
       meson ninja pkgconf go libffi expat libxml2 wayland wayland-protocols \
-      libxkbcommon pixman libinput libdrm mesa seatd systemd-libs scdoc hwdata
+      libxkbcommon pixman libinput libdrm mesa seatd systemd-libs scdoc hwdata jq zstd
     ;;
   alpine-3.24)
     apk add --no-cache \
       bash ca-certificates curl xz file binutils build-base clang git bison \
       meson ninja pkgconf go libffi-dev expat-dev libxml2-dev wayland-dev \
       libxkbcommon-dev pixman-dev libinput-dev libdrm-dev mesa-dev \
-      libseat-dev eudev-dev scdoc hwdata wayland-protocols
+      libseat-dev eudev-dev scdoc hwdata wayland-protocols jq alpine-sdk openssl
     ;;
   *)
     echo "Unknown TARGET_ID: $TARGET_ID" >&2
@@ -167,6 +167,69 @@ case "$TARGET_ID" in
     test ! -e /usr/bin/cage-xtmapper
     dpkg --audit > "$audit/dpkg-audit-after-remove.txt"
     echo "Debian package install/remove smoke test passed." | tee "$audit/deb-lifecycle-result.txt"
+    ;;
+  fedora-44)
+    package_version="0.0.0"
+    package="$audit/cage-xtmapper-$package_version-1.rpm"
+    if ! bash tools/package/build-rpm.sh "$package_version" "$package" > "$audit/rpm-package.log" 2>&1; then
+      cat "$audit/rpm-package.log" >&2
+      exit 1
+    fi
+    cat "$audit/rpm-package.log"
+    if ! dnf install -y "$package" > "$audit/rpm-install.log" 2>&1; then
+      cat "$audit/rpm-install.log" >&2
+      exit 1
+    fi
+    rpm -q cage-xtmapper > "$audit/rpm-query.txt"
+    test -x /usr/bin/cage-xtmapper
+    if ! dnf remove -y cage-xtmapper > "$audit/rpm-remove.log" 2>&1; then
+      cat "$audit/rpm-remove.log" >&2
+      exit 1
+    fi
+    test ! -e /usr/bin/cage-xtmapper
+    echo "RPM install/remove smoke test passed." | tee "$audit/rpm-lifecycle-result.txt"
+    ;;
+  archlinux)
+    package_version="0.0.0"
+    package="$audit/cage-xtmapper-$package_version-1-$(uname -m).pkg.tar.zst"
+    if ! bash tools/package/build-arch.sh "$package_version" "$package" > "$audit/arch-package.log" 2>&1; then
+      cat "$audit/arch-package.log" >&2
+      exit 1
+    fi
+    cat "$audit/arch-package.log"
+    pacman -U --noconfirm "$package" > "$audit/arch-install.log" 2>&1 || {
+      cat "$audit/arch-install.log" >&2
+      exit 1
+    }
+    pacman -Q cage-xtmapper > "$audit/arch-query.txt"
+    test -x /usr/bin/cage-xtmapper
+    pacman -Rns --noconfirm cage-xtmapper > "$audit/arch-remove.log" 2>&1 || {
+      cat "$audit/arch-remove.log" >&2
+      exit 1
+    }
+    test ! -e /usr/bin/cage-xtmapper
+    echo "Pacman install/remove smoke test passed." | tee "$audit/arch-lifecycle-result.txt"
+    ;;
+  alpine-3.24)
+    package_version="0.0.0"
+    package="$audit/cage-xtmapper-$package_version-r0.apk"
+    if ! bash tools/package/build-apk.sh "$package_version" "$package" > "$audit/apk-package.log" 2>&1; then
+      cat "$audit/apk-package.log" >&2
+      exit 1
+    fi
+    cat "$audit/apk-package.log"
+    apk add --allow-untrusted "$package" > "$audit/apk-install.log" 2>&1 || {
+      cat "$audit/apk-install.log" >&2
+      exit 1
+    }
+    apk info -e cage-xtmapper > "$audit/apk-query.txt"
+    test -x /usr/bin/cage-xtmapper
+    apk del cage-xtmapper > "$audit/apk-remove.log" 2>&1 || {
+      cat "$audit/apk-remove.log" >&2
+      exit 1
+    }
+    test ! -e /usr/bin/cage-xtmapper
+    echo "APK install/remove smoke test passed." | tee "$audit/apk-lifecycle-result.txt"
     ;;
 esac
 
