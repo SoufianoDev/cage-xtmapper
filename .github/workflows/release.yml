@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to package for a non-publishing dry run (for example v20261027)"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -13,18 +19,20 @@ jobs:
     runs-on: ubuntu-26.04
     outputs:
       package_version: ${{ steps.validate.outputs.package_version }}
+      release_tag: ${{ steps.validate.outputs.release_tag }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Validate release tag and native package version
         id: validate
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
         shell: bash
         run: |
           set -euo pipefail
           package_version="$(bash tools/ci/validate-release-tag.sh "$RELEASE_TAG")"
           echo "package_version=$package_version" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
   package:
     needs: validate-release-tag
@@ -60,7 +68,7 @@ jobs:
 
       - name: Package versioned archive
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.validate-release-tag.outputs.release_tag }}
           TARGET_ARCH: ${{ matrix.architecture }}
         run: |
           archive="cage-xtmapper-$RELEASE_TAG-$TARGET_ARCH.tar"
@@ -80,8 +88,8 @@ jobs:
         with:
           name: release-assets-${{ matrix.architecture }}
           path: |
-            cage-xtmapper-${{ github.ref_name }}-${{ matrix.architecture }}.tar
-            cage-xtmapper-${{ github.ref_name }}-${{ matrix.architecture }}.tar.sha256
+            cage-xtmapper-${{ needs.validate-release-tag.outputs.release_tag }}-${{ matrix.architecture }}.tar
+            cage-xtmapper-${{ needs.validate-release-tag.outputs.release_tag }}-${{ matrix.architecture }}.tar.sha256
             cage-xtmapper-installer-linux-${{ matrix.architecture }}
             cage-xtmapper-installer-linux-${{ matrix.architecture }}.sha256
           if-no-files-found: error
@@ -124,6 +132,7 @@ jobs:
           IMAGE: ${{ matrix.image }}
           TARGET_REPO_SNAPSHOT: ${{ matrix.target_repo_snapshot || 'not-pinned' }}
           PACKAGE_VERSION: ${{ needs.validate-release-tag.outputs.package_version }}
+          RELEASE_TAG: ${{ needs.validate-release-tag.outputs.release_tag }}
         shell: bash
         run: |
           set -euo pipefail
@@ -162,27 +171,27 @@ jobs:
           case "$TARGET" in
             debian-13)
               package_path="$output/cage-xtmapper_$PACKAGE_VERSION""_amd64.deb"
-              asset="cage-xtmapper-$GITHUB_REF_NAME-debian-13-amd64.deb"
+              asset="cage-xtmapper-$RELEASE_TAG-debian-13-amd64.deb"
               ;;
             ubuntu-24.04)
               package_path="$output/cage-xtmapper_$PACKAGE_VERSION""_amd64.deb"
-              asset="cage-xtmapper-$GITHUB_REF_NAME-ubuntu-24.04-amd64.deb"
+              asset="cage-xtmapper-$RELEASE_TAG-ubuntu-24.04-amd64.deb"
               ;;
             ubuntu-26.04)
               package_path="$output/cage-xtmapper_$PACKAGE_VERSION""_amd64.deb"
-              asset="cage-xtmapper-$GITHUB_REF_NAME-ubuntu-26.04-amd64.deb"
+              asset="cage-xtmapper-$RELEASE_TAG-ubuntu-26.04-amd64.deb"
               ;;
             fedora-44)
               package_path="$output/cage-xtmapper-$PACKAGE_VERSION-1.rpm"
-              asset="cage-xtmapper-$GITHUB_REF_NAME-fedora-44-x86_64.rpm"
+              asset="cage-xtmapper-$RELEASE_TAG-fedora-44-x86_64.rpm"
               ;;
             archlinux)
               package_path="$output/cage-xtmapper-$PACKAGE_VERSION-1-x86_64.pkg.tar.zst"
-              asset="cage-xtmapper-$GITHUB_REF_NAME-archlinux-x86_64.pkg.tar.zst"
+              asset="cage-xtmapper-$RELEASE_TAG-archlinux-x86_64.pkg.tar.zst"
               ;;
             alpine-3.24)
               package_path="$output/cage-xtmapper-$PACKAGE_VERSION-r0.apk"
-              asset="cage-xtmapper-$GITHUB_REF_NAME-alpine-3.24-x86_64.apk"
+              asset="cage-xtmapper-$RELEASE_TAG-alpine-3.24-x86_64.apk"
               ;;
             *)
               echo "No release package mapping for target $TARGET." >&2
@@ -220,6 +229,7 @@ jobs:
       contents: write
     env:
       PACKAGE_VERSION: ${{ needs.validate-release-tag.outputs.package_version }}
+      RELEASE_TAG: ${{ needs.validate-release-tag.outputs.release_tag }}
     steps:
       - name: Download versioned archive and helper assets
         uses: actions/download-artifact@v4
@@ -255,13 +265,13 @@ jobs:
             notes="$6"
             base="$(basename "$file")"
             digest="$(sha256sum "$file" | awk '{print $1}')"
-            url="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$base"
+            url="https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/$base"
             printf '| [%s](%s) ([SHA-256](%s.sha256)) | %s | %s | %s | %s | %s | %s |\n' \
               "$base" "$url" "$url" "$target" "$architecture" "$format" "$status" "$digest" "$notes"
           }
 
           {
-            printf '# Release asset index — %s\n\n' "$GITHUB_REF_NAME"
+            printf '# Release asset index — %s\n\n' "$RELEASE_TAG"
             printf -- '- Source commit: %s\n- Native package version: %s (release tag prefix v removed)\n' "$GITHUB_SHA" "$PACKAGE_VERSION"
             printf -- '- No native package in this draft is marked Supported. CI does not prove startup in a real Wayland/graphics session or SteamOS/Bazzite host integration.\n'
             printf -- '- SHA-256 sidecars detect corruption but do not authenticate the publisher.\n'
@@ -269,7 +279,7 @@ jobs:
             printf '| Asset | Target/build baseline | Architecture | Format | Status | SHA-256 | Notes |\n'
             printf '|---|---|---|---|---|---|---|\n'
 
-            for file in dist/cage-xtmapper-"$GITHUB_REF_NAME"-*.tar; do
+            for file in dist/cage-xtmapper-"$RELEASE_TAG"-*.tar; do
               [[ -f "$file" ]] || continue
               case "$(basename "$file")" in
                 *-amd64.tar) arch="amd64" ;;
@@ -279,7 +289,7 @@ jobs:
               index_asset "$file" "Ubuntu 26.04.1 build baseline; generic release archive" "$arch" ".tar" "Experimental" "Host libraries and real-session compatibility must be checked on the target system."
             done
 
-            for file in dist/cage-xtmapper-"$GITHUB_REF_NAME"-*.deb; do
+            for file in dist/cage-xtmapper-"$RELEASE_TAG"-*.deb; do
               [[ -f "$file" ]] || continue
               base="$(basename "$file")"
               case "$base" in
@@ -291,17 +301,17 @@ jobs:
               index_asset "$file" "$target" "amd64" ".deb" "Experimental" "Container package/dependency/lifecycle checks pass; real Wayland and Waydroid session launch is not yet proven."
             done
 
-            for file in dist/cage-xtmapper-"$GITHUB_REF_NAME"-*.rpm; do
+            for file in dist/cage-xtmapper-"$RELEASE_TAG"-*.rpm; do
               [[ -f "$file" ]] || continue
               index_asset "$file" "Fedora 44" "x86_64" ".rpm" "Experimental" "RPM dependency and lifecycle checks pass in a container; Bazzite host testing is separate and has not been done."
             done
 
-            for file in dist/cage-xtmapper-"$GITHUB_REF_NAME"-*.pkg.tar.zst; do
+            for file in dist/cage-xtmapper-"$RELEASE_TAG"-*.pkg.tar.zst; do
               [[ -f "$file" ]] || continue
               index_asset "$file" "Arch Linux; repositories pinned to snapshot 2026-10-26" "x86_64" ".pkg.tar.zst" "Experimental" "Package-manager lifecycle passed in the recorded snapshot; rolling-release runtime compatibility remains unproven."
             done
 
-            for file in dist/cage-xtmapper-"$GITHUB_REF_NAME"-*.apk; do
+            for file in dist/cage-xtmapper-"$RELEASE_TAG"-*.apk; do
               [[ -f "$file" ]] || continue
               index_asset "$file" "Alpine Linux 3.24.3" "x86_64" ".apk" "Experimental" "Musl-native candidate; production signature/trust is not configured and no real Wayland session test has passed."
             done
@@ -315,10 +325,20 @@ jobs:
           } > dist/native-package-index.md
           (cd dist && sha256sum native-package-index.md > native-package-index.md.sha256)
 
+      - name: Upload dry-run release bundle
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dry-run-${{ needs.validate-release-tag.outputs.release_tag }}-${{ github.sha }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Refuse to modify published releases or overwrite existing tag assets
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.validate-release-tag.outputs.release_tag }}
         shell: bash
         run: |
           set -euo pipefail
@@ -354,9 +374,10 @@ jobs:
           rm -f "$response"
 
       - name: Attach assets to the matching draft release
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ needs.validate-release-tag.outputs.release_tag }}
           files: |
             dist/cage-xtmapper-*.tar
             dist/cage-xtmapper-*.tar.sha256
@@ -364,14 +385,14 @@ jobs:
             dist/cage-xtmapper-installer-linux-amd64.sha256
             dist/cage-xtmapper-installer-linux-arm64
             dist/cage-xtmapper-installer-linux-arm64.sha256
-            dist/cage-xtmapper-${{ github.ref_name }}-*.deb
-            dist/cage-xtmapper-${{ github.ref_name }}-*.deb.sha256
-            dist/cage-xtmapper-${{ github.ref_name }}-*.rpm
-            dist/cage-xtmapper-${{ github.ref_name }}-*.rpm.sha256
-            dist/cage-xtmapper-${{ github.ref_name }}-*.pkg.tar.zst
-            dist/cage-xtmapper-${{ github.ref_name }}-*.pkg.tar.zst.sha256
-            dist/cage-xtmapper-${{ github.ref_name }}-*.apk
-            dist/cage-xtmapper-${{ github.ref_name }}-*.apk.sha256
+            dist/cage-xtmapper-${{ needs.validate-release-tag.outputs.release_tag }}-*.deb
+            dist/cage-xtmapper-${{ needs.validate-release-tag.outputs.release_tag }}-*.deb.sha256
+            dist/cage-xtmapper-${{ needs.validate-release-tag.outputs.release_tag }}-*.rpm
+            dist/cage-xtmapper-${{ needs.validate-release-tag.outputs.release_tag }}-*.rpm.sha256
+            dist/cage-xtmapper-${{ needs.validate-release-tag.outputs.release_tag }}-*.pkg.tar.zst
+            dist/cage-xtmapper-${{ needs.validate-release-tag.outputs.release_tag }}-*.pkg.tar.zst.sha256
+            dist/cage-xtmapper-${{ needs.validate-release-tag.outputs.release_tag }}-*.apk
+            dist/cage-xtmapper-${{ needs.validate-release-tag.outputs.release_tag }}-*.apk.sha256
             dist/native-package-index.md
             dist/native-package-index.md.sha256
           draft: true
