@@ -313,8 +313,13 @@ assert_removed() {
   } > "$audit/package-removal-$suffix.txt"
 }
 
-previous_version="0.0.$((GITHUB_RUN_ID - 1))"
-package_version="${PACKAGE_VERSION:-0.0.$GITHUB_RUN_ID}"
+if [ -n "${PACKAGE_VERSION:-}" ]; then
+  previous_version="0.0.0"
+  package_version="$PACKAGE_VERSION"
+else
+  previous_version="0.0.$((GITHUB_RUN_ID - 1))"
+  package_version="0.0.$GITHUB_RUN_ID"
+fi
 
 case "$TARGET_ID" in
   debian-13|ubuntu-24.04|ubuntu-26.04)
