@@ -52,7 +52,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo ./install_deps.sh
-          sudo apt-get install --yes shellcheck
+          sudo apt-get install --yes shellcheck file binutils
 
       - name: Verify vendored dependency archives
         run: sha256sum --check SHA256SUMS
@@ -71,6 +71,64 @@ jobs:
       - name: Build the single ELF
         run: ./build.sh
 
+      - name: Audit ELF and preserve build evidence
+        env:
+          AUDIT_VERSION: audit-${{ github.run_id }}
+        run: |
+          set -Eeuo pipefail
+          binary="build/go/cage-xtmapper"
+          audit="build/audit"
+          meson_info="build/meson/meson-info"
+
+          test -x "$binary"
+          mkdir -p "$audit/meson"
+
+          {
+            printf 'commit=%s\n' "$(git rev-parse HEAD)"
+            printf 'ref=%s\n' "${GITHUB_REF:-unknown}"
+            printf 'architecture=%s\n' "$(uname -m)"
+            printf 'kernel=%s\n' "$(uname -srv)"
+            printf '\n--- /etc/os-release ---\n'
+            cat /etc/os-release
+            printf '\n--- toolchains ---\n'
+            go version
+            clang --version
+            meson --version
+            ninja --version
+          } > "$audit/environment.txt"
+
+          file "$binary" > "$audit/elf-file.txt"
+          readelf --wide --program-headers "$binary" > "$audit/elf-program-headers.txt"
+          readelf --wide --dynamic "$binary" > "$audit/elf-dynamic.txt"
+          readelf --wide --version-info "$binary" > "$audit/elf-version-info.txt"
+
+          # The ELF is produced from this checked-out source in the same job.
+          # ldd is run only on that trusted build output to capture transitive
+          # loader resolution; direct DT_NEEDED entries are not the full closure.
+          ldd "$binary" > "$audit/loader-resolution.txt" 2>&1
+          if grep -q 'not found' "$audit/loader-resolution.txt"; then
+            cat "$audit/loader-resolution.txt" >&2
+            echo "One or more shared libraries are unresolved in the build environment." >&2
+            exit 1
+          fi
+
+          for name in intro-dependencies.json intro-buildoptions.json intro-projectinfo.json intro-compilers.json; do
+            test -f "$meson_info/$name"
+            cp "$meson_info/$name" "$audit/meson/$name"
+          done
+          meson introspect build/meson --dependencies > "$audit/meson/dependencies-introspect.json"
+          meson introspect build/meson --buildoptions > "$audit/meson/buildoptions-introspect.json"
+          ninja -C build/meson -t commands cage_xtmapper > "$audit/meson/ninja-commands.txt"
+          cp build/go/build-info.json "$audit/build-info.json"
+          cp build/go/provenance.txt "$audit/provenance.txt"
+          cp build/native/pkgconfig/cage-xtmapper-native.pc "$audit/cage-xtmapper-native.pc"
+
+          # Generate a diagnostic release archive from the exact audited ELF so
+          # its manifest is captured. This archive is not published as a release.
+          go run ./tools/release package --version "$AUDIT_VERSION" --output "$audit/cage-xtmapper-audit.tar"
+          tar -xOf "$audit/cage-xtmapper-audit.tar" manifest.json > "$audit/manifest.json"
+          sha256sum "$binary" "$audit/manifest.json" "$audit/cage-xtmapper-audit.tar" > "$audit/SHA256SUMS"
+
       - name: Check Go formatting, runtime and installation
         run: |
           gofmt_files="$(gofmt -l cmd internal tools tests)"
@@ -83,3 +141,17 @@ jobs:
           go vet ./...
           go test -race -count=1 ./...
           bash tests/test-installer-local.sh --skip-build
+
+      - name: Upload ELF audit and build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: elf-audit-${{ runner.arch }}-${{ github.sha }}
+          path: |
+            build/audit/**
+            build/go/cage-xtmapper
+            build/go/build-info.json
+            build/go/provenance.txt
+            build/native/pkgconfig/cage-xtmapper-native.pc
+          if-no-files-found: warn
+          retention-days: 14
