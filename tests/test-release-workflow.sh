@@ -20,8 +20,8 @@ require_text "if: github.event_name == 'push'"
 require_text "overwrite_files: false"
 require_text "draft: true"
 require_text "fail_on_unmatched_files: true"
-require_text 'package_version: ${{ steps.validate.outputs.package_version }}'
-require_text 'release_tag: ${{ steps.validate.outputs.release_tag }}'
+require_text "package_version: \${{ steps.validate.outputs.package_version }}"
+require_text "release_tag: \${{ steps.validate.outputs.release_tag }}"
 require_text "target: debian-13"
 require_text "target: ubuntu-24.04"
 require_text "target: ubuntu-26.04"
