@@ -41,7 +41,7 @@ case "$TARGET_ID" in
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
     apt-get install -y --no-install-recommends \
-      bash ca-certificates curl xz-utils file binutils git clang bison jq dpkg-dev \
+      bash ca-certificates curl xz-utils file binutils git clang bison jq dpkg-dev zstd \
       meson ninja-build pkg-config golang-go libffi-dev libexpat1-dev \
       libxml2-dev libwayland-dev libseat-dev libxkbcommon-dev \
       libpixman-1-dev libudev-dev libinput-dev libdrm-dev \
@@ -55,7 +55,7 @@ case "$TARGET_ID" in
       libxml2-devel wayland-devel libxkbcommon-devel pixman-devel \
       libinput-devel libdrm-devel libdisplay-info-devel libliftoff-devel \
       mesa-libEGL-devel mesa-libGLES-devel mesa-libgbm-devel libseat-devel \
-      systemd-devel hwdata scdoc wayland-protocols-devel rpm-build jq
+      systemd-devel hwdata scdoc wayland-protocols-devel rpm-build jq zstd
     ;;
   archlinux)
     pacman -Syu --noconfirm --needed \
@@ -68,7 +68,7 @@ case "$TARGET_ID" in
       bash ca-certificates curl xz file binutils build-base clang git bison \
       meson ninja pkgconf go libffi-dev expat-dev libxml2-dev wayland-dev \
       libxkbcommon-dev pixman-dev libinput-dev libdrm-dev mesa-dev \
-      libseat-dev eudev-dev scdoc hwdata wayland-protocols jq alpine-sdk openssl util-linux
+      libseat-dev eudev-dev scdoc hwdata wayland-protocols jq alpine-sdk openssl util-linux zstd
     ;;
   *)
     echo "Unknown TARGET_ID: $TARGET_ID" >&2
@@ -136,6 +136,16 @@ archive="$audit/cage-xtmapper-audit.tar"
 go run ./tools/release package --version "$version" --output "$archive"
 tar -xOf "$archive" manifest.json > "$audit/manifest.json"
 sha256sum "$binary" "$audit/manifest.json" "$archive" > "$audit/SHA256SUMS"
+
+# Create the same verified payload in the portable SteamOS/Bazzite transport
+# format. This tests archive integrity only, not runtime compatibility on-device.
+portable="$audit/cage-xtmapper-$version-linux-$(uname -m).tar.zst"
+if ! bash tools/package/build-portable.sh "$version" "$portable" > "$audit/portable-package.log" 2>&1; then
+  cat "$audit/portable-package.log" >&2
+  exit 1
+fi
+cat "$audit/portable-package.log"
+zstd -t "$portable" > "$audit/portable-zstd-test.txt"
 
 case "$TARGET_ID" in
   debian-13|ubuntu-24.04|ubuntu-26.04)

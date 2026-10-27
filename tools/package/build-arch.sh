@@ -151,7 +151,7 @@ pkg_file=$(find "$work" -maxdepth 1 -type f -name 'cage-xtmapper-*.pkg.tar.zst' 
 [[ -n "$pkg_file" && -s "$pkg_file" ]] || { echo "makepkg produced no package." >&2; exit 1; }
 mkdir -p "$(dirname -- "$output")"
 cp "$pkg_file" "$output"
-pacman -Qp --depends "$output" > "${output}.depends.txt"
+tar -xOf "$output" .PKGINFO | sed -n 's/^depend = //p' > "${output}.depends.txt"
 pacman -Qip "$output" > "${output}.info.txt"
 pacman -Qlp "$output" > "${output}.contents.txt"
 sha256sum "$output" > "${output}.sha256"

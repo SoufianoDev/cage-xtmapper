@@ -114,8 +114,7 @@ sed \
   -e "s/@SOURCE_SHA@/$source_sha/g" \
   -e "s/@INSTALL_SHA@/$install_sha/g" \
   "$work/APKBUILD.template" > "$work/APKBUILD"
-cp "$preinstall" "$work/cage-xtmapper.pre-install"
-chmod +x "$work/cage-xtmapper.pre-install"
+chmod 0644 "$work/cage-xtmapper.pre-install"
 
 # Alpine's package builder must run as an unprivileged user. This signing key
 # is generated only for this isolated CI build and is never a release key.
