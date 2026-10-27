@@ -24,9 +24,14 @@ func NativeContract(build, source, command string) (string, error) {
 	}
 	libs := []string{"libcage_xtmapper.a"}
 	for _, token := range tokens[start:] {
-		if !strings.HasSuffix(token, ".o") {
-			libs = append(libs, token)
+		// Meson may place this diagnostic link option in a target link
+		// command on some distro toolchains. The C target was already linked
+		// with it by Ninja; forwarding it through pkg-config to cgo is rejected
+		// by Go's linker-flag allowlist and is not needed for the final Go link.
+		if token == "-Wl,--fatal-warnings" || strings.HasSuffix(token, ".o") {
+			continue
 		}
+		libs = append(libs, token)
 	}
 	if len(libs) == 1 {
 		return "", fmt.Errorf("empty native link contract")
