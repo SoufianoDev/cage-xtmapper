@@ -14,7 +14,15 @@ require_text() {
 
 require_text "workflow_dispatch:"
 require_text "release_tag:"
-require_text "name: Upload dry-run release bundle"
+require_text "name: Upload prepared release bundle"
+require_text "name: Download prepared release bundle"
+require_text "bash tools/ci/create-release-index.sh dist"
+require_text "prepare-release-bundle:"
+require_text "publish:"
+require_text "contents: read"
+require_text "contents: write"
+require_text "release-bundle-"
+require_text "release-dry-run-"
 require_text "if: github.event_name == 'workflow_dispatch'"
 require_text "if: github.event_name == 'push'"
 require_text "overwrite_files: false"
@@ -30,8 +38,19 @@ require_text "target: archlinux"
 require_text "target: alpine-3.24"
 
 push_only_steps="$(grep -Fc "if: github.event_name == 'push'" "$workflow")"
-if [[ "$push_only_steps" -lt 2 ]]; then
-  echo "Release inspection and release attachment must both be gated to tag pushes." >&2
+if [[ "$push_only_steps" -lt 3 ]]; then
+  echo "The publish job, release inspection, and release attachment must all be gated to tag pushes." >&2
+  exit 1
+fi
+
+index_script="$root/tools/ci/create-release-index.sh"
+if [[ ! -x "$index_script" ]]; then
+  echo "Release index builder must exist and be executable." >&2
+  exit 1
+fi
+
+if grep -A 8 '^  prepare-release-bundle:' "$workflow" | grep -Fq 'contents: write'; then
+  echo "Bundle preparation must not have release write permission." >&2
   exit 1
 fi
 
