@@ -215,6 +215,17 @@ run_logged() {
   fi
 }
 
+assert_cli_smoke() {
+  suffix="$1"
+  run_logged "$suffix" /usr/bin/cage-xtmapper --help
+  if ! grep -Fq 'Usage: cage-xtmapper [options]' "$audit/$suffix.log"; then
+    echo "Installed cage-xtmapper did not emit the expected CLI usage text ($suffix)." >&2
+    cat "$audit/$suffix.log" >&2
+    exit 1
+  fi
+  printf 'result=passed\n' > "$audit/$suffix.result"
+}
+
 assert_installed_version() {
   requested="$1"
   suffix="$2"
@@ -300,6 +311,7 @@ case "$TARGET_ID" in
     run_logged deb-install-previous apt-get install -y "$previous_package"
     assert_installed_version "$previous_version" deb-install-previous
     test -x /usr/bin/cage-xtmapper
+    assert_cli_smoke deb-cli-smoke
     run_logged deb-upgrade apt-get install -y "$package"
     assert_installed_version "$package_version" deb-upgrade
     run_logged deb-current-noop apt-get install -y "$package"
@@ -333,6 +345,7 @@ case "$TARGET_ID" in
     run_logged rpm-install-previous dnf install -y "$previous_package"
     assert_installed_version "$previous_version" rpm-install-previous
     test -x /usr/bin/cage-xtmapper
+    assert_cli_smoke rpm-cli-smoke
     run_logged rpm-upgrade dnf install -y "$package"
     assert_installed_version "$package_version" rpm-upgrade
     run_logged rpm-current-reinstall rpm -Uvh --replacepkgs "$package"
@@ -361,6 +374,7 @@ case "$TARGET_ID" in
     run_logged arch-install-previous pacman -U --noconfirm "$previous_package"
     assert_installed_version "$previous_version" arch-install-previous
     test -x /usr/bin/cage-xtmapper
+    assert_cli_smoke arch-cli-smoke
     run_logged arch-upgrade pacman -U --noconfirm "$package"
     assert_installed_version "$package_version" arch-upgrade
     run_logged arch-current-reinstall pacman -U --noconfirm "$package"
@@ -388,6 +402,7 @@ case "$TARGET_ID" in
     run_logged apk-install-previous apk add --allow-untrusted "$previous_package"
     assert_installed_version "$previous_version" apk-install-previous
     test -x /usr/bin/cage-xtmapper
+    assert_cli_smoke apk-cli-smoke
     run_logged apk-upgrade apk add --allow-untrusted "$package"
     assert_installed_version "$package_version" apk-upgrade
     run_logged apk-current-noop apk add --allow-untrusted "$package"
