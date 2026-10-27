@@ -108,6 +108,11 @@ jobs:
           file "$binary" > "$audit/elf-file.txt"
           readelf --wide --program-headers "$binary" > "$audit/elf-program-headers.txt"
           readelf --wide --dynamic "$binary" > "$audit/elf-dynamic.txt"
+          if grep -Eq '\\((RPATH|RUNPATH)\\)' "$audit/elf-dynamic.txt"; then
+            cat "$audit/elf-dynamic.txt" >&2
+            echo "ELF contains an unexpected RPATH/RUNPATH; refusing audit." >&2
+            exit 1
+          fi
           readelf --wide --version-info "$binary" > "$audit/elf-version-info.txt"
 
           # The ELF is produced from this checked-out source in the same job.

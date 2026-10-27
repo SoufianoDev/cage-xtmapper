@@ -59,6 +59,10 @@ case "$TARGET_ID" in
       systemd-devel hwdata scdoc wayland-protocols-devel rpm-build jq zstd
     ;;
   archlinux)
+    [[ "${TARGET_REPO_SNAPSHOT:-}" == "2026-10-26" ]] || {
+      echo "TARGET_REPO_SNAPSHOT must equal 2026-10-26 for this pinned audit." >&2
+      exit 2
+    }
     cat > /etc/pacman.d/mirrorlist <<'ARCH_SNAPSHOT'
 Server = https://archive.archlinux.org/repos/2026/10/26/$repo/os/$arch
 ARCH_SNAPSHOT
@@ -121,6 +125,11 @@ test -x "$binary"
 file "$binary" > "$audit/elf-file.txt"
 readelf --wide --program-headers "$binary" > "$audit/elf-program-headers.txt"
 readelf --wide --dynamic "$binary" > "$audit/elf-dynamic.txt"
+if grep -Eq '\\((RPATH|RUNPATH)\\)' "$audit/elf-dynamic.txt"; then
+  cat "$audit/elf-dynamic.txt" >&2
+  echo "ELF contains an unexpected RPATH/RUNPATH; refusing audit." >&2
+  exit 1
+fi
 readelf --wide --version-info "$binary" > "$audit/elf-version-info.txt"
 
 # Safe here because this ELF was compiled from the checked-out source within

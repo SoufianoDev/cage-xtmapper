@@ -88,6 +88,7 @@ jobs:
             -e TARGET_ID="$TARGET"
             -e TARGET_IMAGE="$IMAGE"
             -e TARGET_IMAGE_DIGEST="$image_digest"
+            -e TARGET_REPO_SNAPSHOT="$TARGET_REPO_SNAPSHOT"
             -e TARGET_ARCH=amd64
             -e GITHUB_RUN_ID="$GITHUB_RUN_ID"
             -e GITHUB_SHA="$GITHUB_SHA"
