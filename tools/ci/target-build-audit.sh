@@ -26,6 +26,11 @@ record_environment() {
     echo "workflow_run_id=$GITHUB_RUN_ID"
     uname -a
     cat /etc/os-release
+    if [ -r /etc/debian_version ]; then
+      printf "debian_version="
+      tr -d '\n' < /etc/debian_version
+      printf '\n'
+    fi
     echo "--- Go ---"
     go version
     echo "--- Clang ---"
