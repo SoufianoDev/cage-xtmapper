@@ -49,6 +49,7 @@ grep -q ' libffi-dev libexpat1-dev libxml2-dev ' "$tmp/out" || fail 'bundled Way
 write_os fedora
 OS_RELEASE_FILE="$tmp/os-release" "$repo/install_deps.sh" --dry-run > "$tmp/out"
 grep -q 'Packages:.*wayland-devel' "$tmp/out" || fail 'Fedora packages were not selected'
+grep -q ' libseat-devel ' "$tmp/out" || fail 'Fedora libseat development headers were omitted'
 write_os arch
 OS_RELEASE_FILE="$tmp/os-release" "$repo/install_deps.sh" --dry-run > "$tmp/out"
 grep -q 'Packages:.*base-devel' "$tmp/out" || fail 'Arch packages were not selected'
