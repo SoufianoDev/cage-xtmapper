@@ -109,8 +109,10 @@ fi
 
 %files
 %{_bindir}/cage-xtmapper
+%dir %{_datadir}/doc/%{name}
 %doc %{_datadir}/doc/%{name}/README.md
 %doc %{_datadir}/doc/%{name}/manifest.json
+%dir %{_licensedir}/%{name}
 %license %{_licensedir}/%{name}/*.txt
 
 %changelog
