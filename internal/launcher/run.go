@@ -289,10 +289,8 @@ func supervise(ctx context.Context, cfg Config, t transport, startupSeconds int6
 		if ctx.Err() != nil {
 			return 1
 		}
-		code := comp.code
+		code := terminatePeerAfterRuntimeExit(cancel, remote, comp.code, "remote XtMapper")
 		markPipelineExitCause(parentCtx, code)
-		cancel()
-		<-remote.dead
 		return code
 	case <-remote.dead:
 		markPipelineExitCause(parentCtx, remote.code)
@@ -304,10 +302,8 @@ func supervise(ctx context.Context, cfg Config, t transport, startupSeconds int6
 		if ctx.Err() != nil {
 			return 1
 		}
-		code := remote.code
+		code := terminatePeerAfterRuntimeExit(cancel, comp, remote.code, "compositor")
 		markPipelineExitCause(parentCtx, code)
-		cancel()
-		<-comp.dead
 		return code
 	case <-ctx.Done():
 		return 1 // Run preserves the initiating signal's status.
@@ -318,6 +314,44 @@ func supervise(ctx context.Context, cfg Config, t transport, startupSeconds int6
 // and observe EOF. A sub-second grace can truncate valid input when a consumer
 // is delayed during startup; cleanup remains bounded when the peer ignores EOF.
 const runtimePeerExitGrace = 2 * time.Second
+
+// A canceled runtime peer is cleaned up with TERM and then KILL. Never wait for
+// its status beyond that bounded cleanup window: cmd.Wait may remain blocked
+// even after group cleanup has exhausted its collection period.
+const runtimePeerCleanupCollectionWindow = cleanupTermGrace + cleanupKillGrace
+
+func waitForChildExit(dead <-chan struct{}, timeout time.Duration) bool {
+	if timeout <= 0 {
+		select {
+		case <-dead:
+			return true
+		default:
+			return false
+		}
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-dead:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+func terminatePeerAfterRuntimeExit(cancel context.CancelFunc, peer *child, initiatingCode int, peerName string) int {
+	cancel()
+	if !waitForChildExit(peer.dead, runtimePeerCleanupCollectionWindow) {
+		fmt.Fprintf(os.Stderr, "Error: timed out waiting for %s process %d after cleanup; exit status collection is incomplete\n", peerName, peer.cmd.Process.Pid)
+	}
+	// Forced cleanup after the natural-exit grace is not a successful pipeline
+	// completion, even if the initiating child itself exited with status zero.
+	if initiatingCode == 0 {
+		reportError(fmt.Errorf("%s did not exit within %s after its peer exited; refusing a successful pipeline result", peerName, runtimePeerExitGrace))
+		return 1
+	}
+	return initiatingCode
+}
 
 func waitForPeerExit(ctx context.Context, peer *child) bool {
 	timer := time.NewTimer(runtimePeerExitGrace)

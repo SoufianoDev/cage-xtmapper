@@ -246,16 +246,26 @@ esac
 // launcher must still return the initiating compositor status after the
 // escalation deadline.
 func TestTermResistantPeerCannotStallExit(t *testing.T) {
-	tools, logs := testEnv(t)
-	compositor := `#!/bin/sh
+	for _, tc := range []struct {
+		name           string
+		compositorExit string
+		wantCode       int
+	}{
+		{name: "preserve initiating failure", compositorExit: "9", wantCode: 9},
+		{name: "forced cleanup cannot be success", compositorExit: "0", wantCode: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tools, logs := testEnv(t)
+			t.Setenv("MOCK_COMPOSITOR_EXIT", tc.compositorExit)
+			compositor := `#!/bin/sh
 printf '%s\n' "$$" > "$MOCK_LOG/cage.pid"
 while [ ! -s "$MOCK_LOG/remote-command" ]; do sleep 0.01; done
-exit 9
+exit "$MOCK_COMPOSITOR_EXIT"
 `
-	if err := os.WriteFile(tools.SelfExe, []byte(compositor), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	waydroid := `#!/bin/sh
+			if err := os.WriteFile(tools.SelfExe, []byte(compositor), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			waydroid := `#!/bin/sh
 case "$1 $2" in
     'session stop'|'container start') exit 0 ;;
     'shell getprop')
@@ -273,21 +283,22 @@ case "$1 $2" in
     *) exit 1 ;;
 esac
 `
-	if err := os.WriteFile(tools.Waydroid, []byte(waydroid), 0o755); err != nil {
-		t.Fatal(err)
+			if err := os.WriteFile(tools.Waydroid, []byte(waydroid), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			start := time.Now()
+			code, _ := runLauncher(t, launcher.Config{Tools: tools})
+			if code != tc.wantCode {
+				t.Fatalf("exit %d, want %d", code, tc.wantCode)
+			}
+			// The TERM-resistant group must survive the TERM grace into SIGKILL.
+			if elapsed := time.Since(start); elapsed < 4*time.Second || elapsed > 15*time.Second {
+				t.Fatalf("resistant peer cleanup took %s, want the bounded escalation window", elapsed)
+			}
+			assertStopped(t, waitPID(t, filepath.Join(logs, "cage.pid")))
+			assertStopped(t, waitPID(t, filepath.Join(logs, "remote.pid")))
+		})
 	}
-	start := time.Now()
-	code, _ := runLauncher(t, launcher.Config{Tools: tools})
-	if code != 9 {
-		t.Fatalf("exit %d, want the initiating compositor status 9", code)
-	}
-	// The TERM-resistant group must survive past the TERM grace into the
-	// SIGKILL escalation instead of ending the wait early or never.
-	if elapsed := time.Since(start); elapsed < 4*time.Second || elapsed > 15*time.Second {
-		t.Fatalf("resistant peer cleanup took %s, want the bounded escalation window", elapsed)
-	}
-	assertStopped(t, waitPID(t, filepath.Join(logs, "cage.pid")))
-	assertStopped(t, waitPID(t, filepath.Join(logs, "remote.pid")))
 }
 
 // TestFailureSurvivesLateSignalDuringCleanup keeps the initiating failure

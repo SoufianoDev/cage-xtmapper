@@ -3,6 +3,7 @@ package launcher
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestShutdownCausePreservesInitiatingKind(t *testing.T) {
@@ -46,6 +47,26 @@ func TestFailureResultRecordsCauseBeforeReturning(t *testing.T) {
 	if code, ok := cause.result(); !ok || code != 127 {
 		t.Fatalf("shutdown result after a late signal = (%d, %v), want (127, true)", code, ok)
 	}
+}
+
+func TestWaitForChildExitIsBounded(t *testing.T) {
+	t.Run("already exited", func(t *testing.T) {
+		dead := make(chan struct{})
+		close(dead)
+		if !waitForChildExit(dead, time.Hour) {
+			t.Fatal("an already-closed child channel was not collected")
+		}
+	})
+
+	t.Run("pending child times out", func(t *testing.T) {
+		start := time.Now()
+		if waitForChildExit(make(chan struct{}), 20*time.Millisecond) {
+			t.Fatal("pending child was reported as exited")
+		}
+		if elapsed := time.Since(start); elapsed > time.Second {
+			t.Fatalf("bounded child wait took %s; want it to return near its 20ms limit", elapsed)
+		}
+	})
 }
 
 func TestPrepareStartupRunsWaydroidLifecycleInOrder(t *testing.T) {
