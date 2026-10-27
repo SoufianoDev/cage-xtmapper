@@ -95,7 +95,7 @@ case "$TARGET_ID" in
       libxml2-devel wayland-devel libxkbcommon-devel pixman-devel \
       libinput-devel libdrm-devel libdisplay-info-devel libliftoff-devel \
       mesa-libEGL-devel mesa-libGLES-devel mesa-libgbm-devel libseat-devel \
-      systemd-devel hwdata scdoc wayland-protocols-devel rpm-build jq zstd
+      systemd-devel hwdata scdoc wayland-protocols-devel rpm-build rpmlint jq zstd
     ;;
   archlinux)
     if [ "${TARGET_REPO_SNAPSHOT:-}" != "2026-10-26" ]; then
@@ -363,6 +363,7 @@ case "$TARGET_ID" in
     package="$audit/cage-xtmapper-$package_version-1.rpm"
     run_logged rpm-package-previous bash tools/package/build-rpm.sh "$previous_version" "$previous_package"
     run_logged rpm-package-current bash tools/package/build-rpm.sh "$package_version" "$package"
+    run_logged rpm-lint rpmlint "$package"
     run_logged rpm-install-previous dnf install -y "$previous_package"
     assert_installed_version "$previous_version" rpm-install-previous
     test -x /usr/bin/cage-xtmapper
