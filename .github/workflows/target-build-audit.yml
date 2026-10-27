@@ -1,0 +1,89 @@
+name: Target-native build and dependency audit
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'build.sh'
+      - 'install_deps.sh'
+      - 'go.mod'
+      - 'go.sum'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'tools/**'
+      - 'native-src/**'
+      - 'meson_wrapfiles/**'
+      - 'wlroots_deps/**'
+      - '.github/workflows/target-build-audit.yml'
+  push:
+    paths:
+      - 'build.sh'
+      - 'install_deps.sh'
+      - 'go.mod'
+      - 'go.sum'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'tools/**'
+      - 'native-src/**'
+      - 'meson_wrapfiles/**'
+      - 'wlroots_deps/**'
+      - '.github/workflows/target-build-audit.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  target-build:
+    name: Build and audit (${{ matrix.target }})
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: debian-13
+            image: debian:13-slim
+          - target: ubuntu-24.04
+            image: ubuntu:24.04
+          - target: ubuntu-26.04
+            image: ubuntu:26.04
+          - target: fedora-44
+            image: fedora:44
+          - target: archlinux
+            image: archlinux:base-devel
+          - target: alpine-3.24
+            image: alpine:3.24
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare audit output directory
+        env:
+          TARGET: ${{ matrix.target }}
+        run: mkdir -p "build/target-audit/$TARGET"
+
+      - name: Build and capture target ABI/runtime evidence
+        env:
+          TARGET: ${{ matrix.target }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          output="build/target-audit/$TARGET"
+          docker pull "$IMAGE"
+          docker run --rm --platform linux/amd64 \
+            -e TARGET_ID="$TARGET" \
+            -e TARGET_IMAGE="$IMAGE" \
+            -e TARGET_ARCH=amd64 \
+            -e GITHUB_RUN_ID="$GITHUB_RUN_ID" \
+            -e GITHUB_SHA="$GITHUB_SHA" \
+            -v "$GITHUB_WORKSPACE:/src" \
+            -w /src \
+            "$IMAGE" sh tools/ci/target-build-audit.sh 2>&1 | tee "$output/container.log"
+
+      - name: Upload target audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: target-audit-${{ matrix.target }}-${{ github.sha }}
+          path: build/target-audit/${{ matrix.target }}/**
+          if-no-files-found: warn
+          retention-days: 14
