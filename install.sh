@@ -155,6 +155,7 @@ else
         helper_url="$repository_url/releases/download/$helper_release_tag"
     elif [[ -n "$requested_version" ]]; then
         # A pinned app release may predate the latest-release helper asset.
+        printf 'install.sh: latest helper redirect did not provide a valid release tag; falling back to pinned version %s\n' "$requested_version" >&2
         helper_release_tag="$requested_version"
         helper_url="$repository_url/releases/download/$helper_release_tag"
         curl --fail --location --silent --show-error --retry 3 --connect-timeout 15 --max-time 300 \
