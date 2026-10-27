@@ -350,31 +350,13 @@ jobs:
             exit 1
           fi
 
-          existing_names="$(jq -r '.assets[]?.name' "$response")"
-          for path in \
-            dist/cage-xtmapper-*.tar \
-            dist/cage-xtmapper-*.tar.sha256 \
-            dist/cage-xtmapper-installer-linux-amd64 \
-            dist/cage-xtmapper-installer-linux-amd64.sha256 \
-            dist/cage-xtmapper-installer-linux-arm64 \
-            dist/cage-xtmapper-installer-linux-arm64.sha256 \
-            dist/cage-xtmapper-"$RELEASE_TAG"-*.deb \
-            dist/cage-xtmapper-"$RELEASE_TAG"-*.deb.sha256 \
-            dist/cage-xtmapper-"$RELEASE_TAG"-*.rpm \
-            dist/cage-xtmapper-"$RELEASE_TAG"-*.rpm.sha256 \
-            dist/cage-xtmapper-"$RELEASE_TAG"-*.pkg.tar.zst \
-            dist/cage-xtmapper-"$RELEASE_TAG"-*.pkg.tar.zst.sha256 \
-            dist/cage-xtmapper-"$RELEASE_TAG"-*.apk \
-            dist/cage-xtmapper-"$RELEASE_TAG"-*.apk.sha256 \
-            dist/native-package-index.md \
-            dist/native-package-index.md.sha256; do
-            [[ -f "$path" ]] || continue
-            name="$(basename "$path")"
-            if grep -Fxq "$name" <<< "$existing_names"; then
-              echo "Refusing to overwrite existing asset $name on tag $RELEASE_TAG." >&2
-              exit 1
-            fi
-          done
+          existing_count="$(jq '.assets | length' "$response")"
+          if [[ "$existing_count" -gt 0 ]]; then
+            echo "Refusing to append to an existing draft with $existing_count asset(s) on tag $RELEASE_TAG." >&2
+            echo "This avoids mixing stale/mismatched artifacts into the release index and never overwrites assets." >&2
+            jq -r '.assets[] | .name' "$response" >&2
+            exit 1
+          fi
           rm -f "$response"
 
       - name: Attach assets to the matching draft release
