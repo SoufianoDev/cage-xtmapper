@@ -423,46 +423,66 @@ func TestStartupDeadlineStartsAfterWaydroidLifecycle(t *testing.T) {
 	}
 }
 
-func TestStartupDeadlineCoversABIAndAPKProbes(t *testing.T) {
-	for _, phase := range []string{"abi", "apk"} {
-		t.Run(phase, func(t *testing.T) {
+func TestDiscoveryProbesHaveIndependentTimeouts(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		mode       string
+		minElapsed time.Duration
+	}{
+		{name: "ABI discovery outlives boot budget", mode: "abi", minElapsed: 1800 * time.Millisecond},
+		{name: "debug and release APK lookups have separate budgets", mode: "apk", minElapsed: 3500 * time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			tools, logs := testEnv(t)
-			t.Setenv("XTMAPPER_BOOT_WAIT_SECONDS", "2")
-			t.Setenv("MOCK_PHASE", phase)
+			t.Setenv("XTMAPPER_BOOT_WAIT_SECONDS", "1")
+			t.Setenv("MOCK_DISCOVERY_MODE", tc.mode)
 			adb := "#!/bin/sh\n" +
-				"case \"$2 $3\" in\n" +
-				"    'getprop sys.boot_completed') printf '1\\n' ;;\n" +
-				"    'getprop ro.product.cpu.abi')\n" +
-				"        if [ \"$MOCK_PHASE\" = abi ]; then printf '%s\\n' \"$$\" > \"$MOCK_LOG/probe.pid\"; exec sleep 600; fi\n" +
-				"        printf 'x86_64\\n' ;;\n" +
-				"    'pm path')\n" +
-				"        if [ \"$MOCK_PHASE\" = apk ]; then printf '%s\\n' \"$$\" > \"$MOCK_LOG/probe.pid\"; exec sleep 600; fi\n" +
-				"        printf 'package:/data/app/xtmapper/base.apk\\n' ;;\n" +
-				"    *) exit 1 ;;\n" +
-				"esac\n"
+				"if [ \"$1\" = shell ] && [ \"$2\" = getprop ]; then\n" +
+				"    case \"$3\" in\n" +
+				"        sys.boot_completed) printf '1\\n' ;;\n" +
+				"        ro.product.cpu.abi) [ \"$MOCK_DISCOVERY_MODE\" = abi ] && sleep 2; printf 'x86_64\\n' ;;\n" +
+				"        *) exit 1 ;;\n" +
+				"    esac\n" +
+				"elif [ \"$1\" = shell ] && [ \"$2\" = pm ]; then\n" +
+				"    printf '%s\\n' \"$4\" >> \"$MOCK_LOG/package-probes\"\n" +
+				"    case \"$4\" in\n" +
+				"        xtr.keymapper.debug) [ \"$MOCK_DISCOVERY_MODE\" = apk ] && sleep 2; exit 0 ;;\n" +
+				"        xtr.keymapper) [ \"$MOCK_DISCOVERY_MODE\" = apk ] && sleep 2; printf 'package:/data/app/xtmapper/base.apk\\n' ;;\n" +
+				"        *) exit 1 ;;\n" +
+				"    esac\n" +
+				"elif [ \"$1\" = shell ]; then\n" +
+				"    printf '%s\\n' \"$2\" > \"$MOCK_LOG/remote-command\"\n" +
+				"    cat > \"$MOCK_LOG/remote-stdin\"\n" +
+				"    exit 0\n" +
+				"else\n" +
+				"    exit 1\n" +
+				"fi\n"
 			if err := os.WriteFile(tools.ADB, []byte(adb), 0o755); err != nil {
 				t.Fatal(err)
 			}
+
 			start := time.Now()
 			code, stderr := runLauncher(t, launcher.Config{UseADB: true, Tools: tools})
 			elapsed := time.Since(start)
-			if code != 1 {
-				t.Fatalf("startup %s probe timeout exit %d, stderr %s", phase, code, stderr)
+			if code != 0 {
+				t.Fatalf("startup discovery failed after %s with exit %d, stderr %s", elapsed, code, stderr)
 			}
-			wantPhase := map[string]string{
-				"abi": "determining the Android CPU ABI",
-				"apk": "locating the XtMapper APK",
-			}[phase]
-			if !strings.Contains(stderr, "Android startup did not complete within 2 seconds while "+wantPhase) {
-				t.Fatalf("shared startup deadline was not reported for %s: %s", phase, stderr)
+			if elapsed < tc.minElapsed || elapsed > 8*time.Second {
+				t.Fatalf("discovery elapsed %s; want at least %s and less than 8s", elapsed, tc.minElapsed)
 			}
-			if elapsed > 5*time.Second {
-				t.Fatalf("startup %s probe exceeded the shared deadline and cleanup allowance: %s", phase, elapsed)
+			if _, err := os.Stat(filepath.Join(logs, "remote-command")); err != nil {
+				t.Fatalf("remote service was not launched after discovery: %v", err)
 			}
-			assertStopped(t, waitPID(t, filepath.Join(logs, "probe.pid")))
-			if _, err := os.Stat(filepath.Join(logs, "remote-command")); !os.IsNotExist(err) {
-				t.Fatal("remote service launched after a startup probe timed out")
+			if tc.mode == "apk" {
+				probes, err := os.ReadFile(filepath.Join(logs, "package-probes"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got, want := string(probes), "xtr.keymapper.debug\nxtr.keymapper\n"; got != want {
+					t.Fatalf("APK lookup order = %q, want %q", got, want)
+				}
 			}
+			assertStopped(t, waitPID(t, filepath.Join(logs, "cage.pid")))
 		})
 	}
 }

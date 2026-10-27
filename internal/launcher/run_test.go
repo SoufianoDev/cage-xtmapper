@@ -3,7 +3,6 @@ package launcher
 import (
 	"context"
 	"testing"
-	"time"
 )
 
 func TestShutdownCausePreservesInitiatingKind(t *testing.T) {
@@ -49,29 +48,23 @@ func TestFailureResultRecordsCauseBeforeReturning(t *testing.T) {
 	}
 }
 
-func TestPrepareStartupStartsBootDeadlineAfterContainerStart(t *testing.T) {
-	const bootWait = 1
-	delay := 150 * time.Millisecond
+func TestPrepareStartupRunsWaydroidLifecycleInOrder(t *testing.T) {
+	var calls []string
 	transport := transport{
 		stopSession: func(context.Context) error {
-			time.Sleep(delay)
+			calls = append(calls, "stop")
 			return nil
 		},
 		startContainer: func(context.Context) error {
-			time.Sleep(delay)
+			calls = append(calls, "container start")
 			return nil
 		},
 	}
 
-	started := time.Now()
-	deadline, err := prepareStartup(context.Background(), transport, bootWait)
-	if err != nil {
+	if err := prepareStartup(context.Background(), transport); err != nil {
 		t.Fatal(err)
 	}
-	if remaining := time.Until(deadline); remaining < 900*time.Millisecond {
-		t.Fatalf("Android boot budget after preparation = %s; want close to %d second", remaining, bootWait)
-	}
-	if elapsed := time.Since(started); elapsed < 2*delay {
-		t.Fatalf("preparation did not run both steps: elapsed %s", elapsed)
+	if len(calls) != 2 || calls[0] != "stop" || calls[1] != "container start" {
+		t.Fatalf("Waydroid startup calls = %v, want [stop container start]", calls)
 	}
 }
