@@ -270,6 +270,86 @@ assert_installed_version() {
   printf '%s\n' "$actual" > "$audit/package-version-$suffix.txt"
 }
 
+expect_legacy_conflict_refused() {
+  suffix="$1"
+  shift
+  legacy_root=/opt/cage-xtmapper
+  legacy_launcher=/usr/local/bin/cage-xtmapper
+
+  for path in "$legacy_root" "$legacy_launcher"; do
+    if [ -e "$path" ] || [ -L "$path" ]; then
+      echo "Cannot run legacy-conflict fixture: target image already contains $path." >&2
+      exit 2
+    fi
+  done
+
+  mkdir -p "$legacy_root" /usr/local/bin
+  printf 'legacy-root-sentinel\n' > "$legacy_root/sentinel"
+  printf '#!/bin/sh\n# legacy-launcher-sentinel\nexit 0\n' > "$legacy_launcher"
+  chmod 0755 "$legacy_launcher"
+
+  if "$@" > "$audit/$suffix.log" 2>&1; then
+    echo "Package manager accepted installation despite bootstrap-owned paths ($TARGET_ID)." >&2
+    cat "$audit/$suffix.log" >&2
+    exit 1
+  else
+    status=$?
+  fi
+  printf 'exit_status=%s\n' "$status" > "$audit/$suffix.status"
+
+  if ! grep -Fq 'Remove the previous managed installation deliberately' "$audit/$suffix.log"; then
+    echo "Install failed for a reason other than the expected legacy-path guard ($TARGET_ID)." >&2
+    cat "$audit/$suffix.log" >&2
+    exit 1
+  fi
+  if [ "$(cat "$legacy_root/sentinel")" != "legacy-root-sentinel" ] ||
+     ! grep -Fq 'legacy-launcher-sentinel' "$legacy_launcher"; then
+    echo "Legacy sentinel content changed after guarded install attempt ($TARGET_ID)." >&2
+    exit 1
+  fi
+  if [ -e /usr/bin/cage-xtmapper ] || [ -L /usr/bin/cage-xtmapper ]; then
+    echo "Package executable appeared despite the legacy-path guard ($TARGET_ID)." >&2
+    exit 1
+  fi
+
+  case "$TARGET_ID" in
+    debian-13|ubuntu-24.04|ubuntu-26.04)
+      installed_status="$(dpkg-query -W -f='${Status}' cage-xtmapper 2>/dev/null || true)"
+      if [ "$installed_status" = "install ok installed" ]; then
+        echo "Debian package was installed despite its preinst guard." >&2
+        exit 1
+      fi
+      ;;
+    fedora-44)
+      if rpm -q cage-xtmapper >/dev/null 2>&1; then
+        echo "RPM was installed despite its %pre guard." >&2
+        exit 1
+      fi
+      ;;
+    archlinux)
+      if pacman -Q cage-xtmapper >/dev/null 2>&1; then
+        echo "Pacman package was installed despite its pre_install guard." >&2
+        exit 1
+      fi
+      ;;
+    alpine-3.24)
+      if apk info --exists cage-xtmapper >/dev/null 2>&1; then
+        echo "APK was installed despite its pre-install guard." >&2
+        exit 1
+      fi
+      ;;
+  esac
+
+  rm -f "$legacy_root/sentinel" "$legacy_launcher"
+  rmdir "$legacy_root"
+  {
+    echo "result=passed"
+    echo "package_installed=false"
+    echo "legacy_root_sentinel=preserved"
+    echo "legacy_launcher_sentinel=preserved"
+  } > "$audit/$suffix.result"
+}
+
 assert_removed() {
   suffix="$1"
   case "$TARGET_ID" in
@@ -329,6 +409,7 @@ case "$TARGET_ID" in
     export PACKAGE_MAINTAINER="Cage XtMapper CI <ci@example.invalid>"
     run_logged deb-package-previous bash tools/package/build-deb.sh "$previous_version" "$previous_package"
     run_logged deb-package-current bash tools/package/build-deb.sh "$package_version" "$package"
+    expect_legacy_conflict_refused deb-legacy-conflict apt-get install -y "$previous_package"
     run_logged deb-install-previous apt-get install -y "$previous_package"
     assert_installed_version "$previous_version" deb-install-previous
     test -x /usr/bin/cage-xtmapper
@@ -368,6 +449,7 @@ case "$TARGET_ID" in
     ln -s "$(basename "$package")" "$rpm_lint_path"
     run_logged rpm-lint rpmlint "$rpm_lint_path"
     rm -f "$rpm_lint_path"
+    expect_legacy_conflict_refused rpm-legacy-conflict dnf install -y "$previous_package"
     run_logged rpm-install-previous dnf install -y "$previous_package"
     assert_installed_version "$previous_version" rpm-install-previous
     test -x /usr/bin/cage-xtmapper
@@ -397,6 +479,7 @@ case "$TARGET_ID" in
     package="$audit/cage-xtmapper-$package_version-1-$machine.pkg.tar.zst"
     run_logged arch-package-previous bash tools/package/build-arch.sh "$previous_version" "$previous_package"
     run_logged arch-package-current bash tools/package/build-arch.sh "$package_version" "$package"
+    expect_legacy_conflict_refused arch-legacy-conflict pacman -U --noconfirm "$previous_package"
     run_logged arch-install-previous pacman -U --noconfirm "$previous_package"
     assert_installed_version "$previous_version" arch-install-previous
     test -x /usr/bin/cage-xtmapper
@@ -425,6 +508,7 @@ case "$TARGET_ID" in
     package="$audit/cage-xtmapper-$package_version-r0.apk"
     run_logged apk-package-previous bash tools/package/build-apk.sh "$previous_version" "$previous_package"
     run_logged apk-package-current bash tools/package/build-apk.sh "$package_version" "$package"
+    expect_legacy_conflict_refused apk-legacy-conflict apk add --allow-untrusted "$previous_package"
     run_logged apk-install-previous apk add --allow-untrusted "$previous_package"
     assert_installed_version "$previous_version" apk-install-previous
     test -x /usr/bin/cage-xtmapper
