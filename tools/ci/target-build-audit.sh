@@ -8,11 +8,6 @@ set -eu
 : "${TARGET_ARCH:=amd64}"
 
 root=$(pwd -P)
-# The checkout is bind-mounted from the hosted runner and may be owned by a
-# different UID than the container user. Allow this exact repository so Go
-# can retain VCS metadata rather than failing its automatic build stamping.
-git config --global --add safe.directory "$root"
-git -C "$root" rev-parse --is-inside-work-tree >/dev/null
 audit="$root/build/target-audit/$TARGET_ID"
 mkdir -p "$audit"
 
@@ -76,6 +71,12 @@ case "$TARGET_ID" in
     exit 2
     ;;
 esac
+
+# git is installed by the target-specific package list above. The checkout is
+# bind-mounted from the hosted runner and may have a different UID; allow only
+# this source tree so Go can retain VCS metadata during automatic build stamping.
+git config --global --add safe.directory "$root"
+git -C "$root" rev-parse --is-inside-work-tree >/dev/null
 
 # The module requires Go 1.24+. Newer toolchains auto-select from go.mod
 # where the distro package's bundled toolchain is older. Keep the observed
