@@ -50,7 +50,7 @@ jobs:
             image: fedora@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
           - target: archlinux
             image: archlinux@sha256:3cbf69d2d5958d6a294f3722c5668e6187c4df8e00fa27f72352f0bf83e495e1
-            target_repo_snapshot: "2026-10-27"
+            target_repo_snapshot: "2026-10-26"
           - target: alpine-3.24
             image: alpine@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 

@@ -60,7 +60,7 @@ case "$TARGET_ID" in
     ;;
   archlinux)
     cat > /etc/pacman.d/mirrorlist <<'ARCH_SNAPSHOT'
-Server = https://archive.archlinux.org/repos/2026/10/27/$repo/os/$arch
+Server = https://archive.archlinux.org/repos/2026/10/26/$repo/os/$arch
 ARCH_SNAPSHOT
     pacman -Syyu --noconfirm --needed \
       bash ca-certificates curl xz file binutils base-devel clang git bison \
