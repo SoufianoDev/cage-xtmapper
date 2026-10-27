@@ -117,23 +117,33 @@ sed \
   "$work/APKBUILD.template" > "$work/APKBUILD"
 chmod 0644 "$work/cage-xtmapper.pre-install"
 
-# Alpine's package builder must run as an unprivileged user. This signing key
-# is generated only for this isolated CI build and is never a release key.
+# Alpine package builds run unprivileged and use a disposable CI-only key.
+# The CI lifecycle test calls this script more than once in the same container;
+# keep one key across those calls so previously built test packages remain trusted.
 if ! getent group abuild >/dev/null 2>&1; then addgroup -S abuild; fi
 if ! id cagepackager >/dev/null 2>&1; then adduser -D -G abuild -h "$tmp/home" cagepackager; fi
-# mktemp creates a private 0700 parent; make the known temporary path
-# traversable before abuild switches to the unprivileged package user.
 chmod 0711 "$tmp"
 home=$(getent passwd cagepackager | cut -d: -f6)
 mkdir -p "$home/.abuild"
-openssl genrsa -out "$home/.abuild/cage-xtmapper-ci.rsa" 2048 >/dev/null 2>&1
-openssl rsa -in "$home/.abuild/cage-xtmapper-ci.rsa" -pubout -out "$home/.abuild/cage-xtmapper-ci.rsa.pub" >/dev/null 2>&1
-# Trust this ephemeral CI-only signing key while abuild generates its local index.
-install -Dm644 "$home/.abuild/cage-xtmapper-ci.rsa.pub" /etc/apk/keys/cage-xtmapper-ci.rsa.pub
-chown -R cagepackager:abuild "$home" "$work"
-chmod 0600 "$home/.abuild/cage-xtmapper-ci.rsa"
+key_dir="${APK_CI_KEY_DIR:-$tmp/ci-key}"
+mkdir -p "$key_dir"
+private_key="$key_dir/cage-xtmapper-ci.rsa"
+public_key="$key_dir/cage-xtmapper-ci.rsa.pub"
+if [[ -s "$private_key" && -s "$public_key" ]]; then
+  :
+elif [[ ! -e "$private_key" && ! -e "$public_key" ]]; then
+  openssl genrsa -out "$private_key" 2048 >/dev/null 2>&1
+  openssl rsa -in "$private_key" -pubout -out "$public_key" >/dev/null 2>&1
+else
+  echo "Incomplete temporary APK signing key pair in $key_dir." >&2
+  exit 1
+fi
+chown -R cagepackager:abuild "$home" "$work" "$key_dir"
+chmod 0600 "$private_key"
+# Trust only the disposable key used by this isolated build/test container.
+install -Dm644 "$public_key" /etc/apk/keys/cage-xtmapper-ci.rsa.pub
 export PACKAGER="Cage XtMapper CI <ci@example.invalid>"
-export PACKAGER_PRIVKEY="$home/.abuild/cage-xtmapper-ci.rsa"
+export PACKAGER_PRIVKEY="$private_key"
 export REPODEST="$tmp/packages"
 mkdir -p "$REPODEST"
 chown -R cagepackager:abuild "$REPODEST"

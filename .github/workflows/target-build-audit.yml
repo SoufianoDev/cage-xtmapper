@@ -98,7 +98,7 @@ jobs:
 
           if [[ "$TARGET" == "alpine-3.24" ]]; then
             # Alpine deliberately uses its own musl-native Go toolchain.
-            docker "${common_args[@]}" "$IMAGE" sh tools/ci/target-build-audit.sh 2>&1 | tee "$output/container.log"
+            docker "${common_args[@]}" -e APK_CI_KEY_DIR=/tmp/cage-xtmapper-apk-ci-key "$IMAGE" sh tools/ci/target-build-audit.sh 2>&1 | tee "$output/container.log"
           else
             # Distro packages in older glibc images may ship Go < 1.24.
             # Mount the pinned official toolchain from setup-go into the
