@@ -120,6 +120,9 @@ chmod 0644 "$work/cage-xtmapper.pre-install"
 # is generated only for this isolated CI build and is never a release key.
 if ! getent group abuild >/dev/null 2>&1; then addgroup -S abuild; fi
 if ! id cagepackager >/dev/null 2>&1; then adduser -D -G abuild -h "$tmp/home" cagepackager; fi
+# mktemp creates a private 0700 parent; make the known temporary path
+# traversable before abuild switches to the unprivileged package user.
+chmod 0711 "$tmp"
 home=$(getent passwd cagepackager | cut -d: -f6)
 mkdir -p "$home/.abuild"
 openssl genrsa -out "$home/.abuild/cage-xtmapper-ci.rsa" 2048 >/dev/null 2>&1
