@@ -121,6 +121,10 @@ meson_setup_args=(
     -Dwayland:werror=false
     -Dlibdrm:werror=false
     -Dlibxkbcommon:werror=false
+    # edid-decode is a build-time helper from libdisplay-info's fallback.
+    # Keep strict warnings for project code but avoid upstream compiler-version
+    # warnings in that helper blocking supported distro toolchains.
+    -Dedid-decode:werror=false
 )
 if [[ -f "$meson_build_dir/meson-private/coredata.dat" ]]; then
     meson setup --reconfigure "$meson_build_dir" "$source_dir" "${meson_setup_args[@]}"
