@@ -39,3 +39,8 @@ Use `-count=1`: integration suites build or use a separate application, which Go
 The shell launcher remains a behavior reference for its tests. Installed and packaged applications use the single `cage-xtmapper` ELF. Keep installer tooling in the source checkout and preserve the release allowlist.
 
 Pull requests should explain the user-visible behavior, list checks run, and include the `native-src/ORIGINS` updates for any dependency source change. Preserve prior contributor credit when adapting code; see [CONTRIBUTORS.md](CONTRIBUTORS.md).
+
+
+## Native package and release validation
+
+See [Release Candidate Validation](docs/release-validation.md) for the non-publishing workflow-dispatch dry run, the draft-release guardrails, the candidate artifact list, and the evidence required before declaring a distribution supported.
