@@ -39,7 +39,7 @@ Developers can test automatic install, update, same-version no-op, status, and u
 bash tests/test-installer-local.sh
 ```
 
-See [Installation And Recovery](docs/installation.md) for the ownership guarantees, legacy migration, recovery behavior, and local test options.
+See [Installation And Recovery](docs/installation.md) for the ownership guarantees, legacy migration, recovery behavior, and local test options. For experimental native package commands and the non-publishing release dry-run, see [Release Candidate Validation](docs/release-validation.md) and the [native package section](docs/installation.md#experimental-native-package-candidates).
 
 ## Run
 

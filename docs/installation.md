@@ -39,6 +39,80 @@ curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-t
 
 The bootstrap downloads the prebuilt helper and matching archive, verifies both SHA-256 checksums, and delegates the filesystem transaction to the Go installer. The automated installer still uses the versioned `.tar` format for Linux amd64 and arm64; it does not call APT, DNF, Pacman or APK to install the main application. The tag-triggered release workflow additionally builds experimental `.deb`, `.rpm`, Arch/Pacman and Alpine/APK candidates and is configured to attach them to a draft release with a checksummed asset index. This native release path has passed branch CI package lifecycle checks, but the release workflow itself has not yet been exercised by a version-tag push. These candidates are not yet `Supported` runtime paths, because a container `--help` smoke test is not a real Wayland/graphics-session or Waydroid integration test. Existing non-empty draft releases are deliberately left unchanged; the workflow refuses to append assets to them or overwrite already-published releases. Alpine APK files are signed with a disposable CI key, not a publisher-authenticated production key.
 
+## Experimental native package candidates
+
+The tag-triggered release workflow is configured to attach native package candidates to a clean draft release. These files are not available as public release downloads until a maintainer publishes that draft, and the tag-triggered release workflow has not yet been run end-to-end. Treat all native formats as Experimental: CI has tested package metadata, package-manager lifecycle, and the installed CLI help output in containers, but not startup in a real Wayland/graphics session or Waydroid input integration.
+
+When a published release index lists the matching package for your exact distribution version and architecture, download that asset and its adjacent .sha256 file. In the same directory, verify the file before installing. Example filenames below use sample versions; use the exact asset names listed in the release index.
+
+### Debian 13 and Ubuntu 24.04 / 26.04 (.deb)
+
+For Ubuntu, choose the asset matching your LTS release; for Debian, choose the Debian 13 asset.
+
+```bash
+pkg='./cage-xtmapper-v1.2.3-ubuntu-24.04-amd64.deb'
+sha256sum -c "$pkg.sha256"
+sudo apt install "$pkg"
+
+older_pkg='./cage-xtmapper-v1.2.2-ubuntu-24.04-amd64.deb'
+sha256sum -c "$older_pkg.sha256"
+sudo apt install --allow-downgrades "$older_pkg"
+
+sudo apt purge cage-xtmapper
+```
+
+For Debian 13, substitute the asset names containing `debian-13`; for Ubuntu 26.04, substitute `ubuntu-26.04`. Installing a newer local .deb through APT upgrades the installed package and resolves its declared dependencies. APT repositories are not configured by this project.
+
+### Fedora 44 (.rpm)
+
+```bash
+pkg='./cage-xtmapper-v1.2.3-fedora-44-x86_64.rpm'
+sha256sum -c "$pkg.sha256"
+sudo dnf install "$pkg"
+
+older_pkg='./cage-xtmapper-v1.2.2-fedora-44-x86_64.rpm'
+sha256sum -c "$older_pkg.sha256"
+sudo rpm -Uvh --oldpackage "$older_pkg"
+
+sudo dnf remove cage-xtmapper
+```
+
+Fedora's RPM candidate has passed rpmlint using its canonical NEVRA filename and the DNF/RPM lifecycle audit in CI. This is not evidence of Bazzite compatibility; Bazzite requires separate host validation.
+
+### Arch Linux (.pkg.tar.zst)
+
+```bash
+pkg='./cage-xtmapper-v1.2.3-archlinux-x86_64.pkg.tar.zst'
+sha256sum -c "$pkg.sha256"
+sudo pacman -U "$pkg"
+
+older_pkg='./cage-xtmapper-v1.2.2-archlinux-x86_64.pkg.tar.zst'
+sha256sum -c "$older_pkg.sha256"
+sudo pacman -U "$older_pkg"
+
+sudo pacman -Rns cage-xtmapper
+```
+
+These are direct package-file operations. The project does not operate a Pacman binary repository, and it does not publish or manage an AUR entry for you. Updating requires downloading the new versioned asset (or rebuilding a reviewed PKGBUILD); do not expect `pacman -Syu` to update this package automatically.
+
+### Alpine Linux 3.24 (.apk)
+
+```bash
+pkg='./cage-xtmapper-v1.2.3-alpine-3.24-x86_64.apk'
+sha256sum -c "$pkg.sha256"
+sudo apk add --allow-untrusted "$pkg"
+
+sudo apk del cage-xtmapper
+```
+
+The CI-only APK signature is made with a disposable key that is not a production publisher key, so `--allow-untrusted` is an explicit trust bypass. Verify the SHA-256 sidecar before installation; the checksum detects corruption but does not authenticate who published the file. Explicit downgrade is not claimed or documented for APK in this workflow.
+
+### Legacy installer conflict and common limitations
+
+Native packages install the executable under /usr/bin/cage-xtmapper. Their pre-install guards intentionally refuse installation if the bootstrap-managed /opt/cage-xtmapper tree or /usr/local/bin/cage-xtmapper path exists, because the older launcher can shadow the package-owned binary. The bootstrap uninstaller deliberately retains ownership state and lock metadata, so running uninstall does not necessarily remove this guard condition. Automatic migration/coexistence has not been implemented or tested; stop here and inspect any leftover state rather than deleting it blindly or removing a lock file while a process may hold it.
+
+These packages do not install Waydroid, the XtMapper APK, or a compositor/graphics stack. They do not configure native package repositories. Production signing, a published trust root, and support status beyond Experimental remain maintainer-gated.
+
 At present, the installer can install recognized missing shared-library packages through APT on Debian/Ubuntu. Other distributions receive explicit errors for missing libraries; package names are not guessed. Waydroid and the XtMapper Android APK remain prerequisites. System mutations require root, normally supplied by `sudo`. The bootstrap's default auto mode is the normal user-facing entry point; explicit operations are retained for diagnostics and maintenance.
 
 | Explicit Operation | Result |
