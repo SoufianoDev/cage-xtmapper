@@ -130,6 +130,9 @@ func licenseTexts(repo, binary string, archives []string) ([]release.License, ma
 		"libwayland-client.a": {"Wayland", "MIT", "subprojects/wayland-1.24.0/COPYING"},
 		"libxkbcommon.a":      {"libxkbcommon", "MIT and source notices", "subprojects/libxkbcommon-1.8.0/LICENSE"},
 		"libpixman-1.a":       {"Pixman", "MIT and source notices", "subprojects/pixman-0.46.0/COPYING"},
+		"libdisplay-info.a":   {"libdisplay-info", "MIT", "subprojects/libdisplay-info-0.2.0/LICENSE"},
+		"libliftoff.a":        {"libliftoff", "MIT", "subprojects/libliftoff-0.5.0/LICENSE"},
+		"libseat.a":           {"seatd", "MIT", "subprojects/seatd-0.9.1/LICENSE"},
 	}
 	texts := make(map[string]string)
 	var licenses []release.License
@@ -154,7 +157,15 @@ func licenseTexts(repo, binary string, archives []string) ([]release.License, ma
 	if err != nil {
 		return nil, nil, err
 	}
-	goNotice, err := firstFile(filepath.Join(goroot, "LICENSE"), filepath.Join("/usr/share/doc", "golang-"+strings.TrimPrefix(filepath.Base(goroot), "go-")+"-go", "copyright"))
+	goNotice, err := firstFile(
+		filepath.Join(goroot, "LICENSE"),
+		filepath.Join(goroot, "src", "LICENSE"),
+		filepath.Join("/usr/share/doc", "golang-"+strings.TrimPrefix(filepath.Base(goroot), "go-")+"-go", "copyright"),
+		"/usr/share/doc/golang-go/copyright",
+		"/usr/share/doc/go/copyright",
+		"/usr/share/licenses/go/LICENSE",
+		"/usr/share/licenses/golang/LICENSE",
+	)
 	if err != nil {
 		return nil, nil, err
 	}
