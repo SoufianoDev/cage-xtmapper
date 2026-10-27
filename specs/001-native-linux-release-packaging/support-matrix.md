@@ -1,6 +1,6 @@
 # Linux Support Matrix — Cage XtMapper
 
-**Evidence snapshot:** 2026-10-27. The latest fully successful target-native audit is [workflow run 40510507392](https://github.com/SoufianoDev/cage-xtmapper/actions/runs/40510507392), source commit **e5a294463b814b92bac5f7e7d12f683e154a1108**. All six target jobs passed. The latest completed multi-architecture ELF validation [run 40510508129](https://github.com/SoufianoDev/cage-xtmapper/actions/runs/40510508129) passed amd64 and arm64. The matching multi-architecture validation run passed amd64 and arm64.
+**Evidence snapshot:** 2026-10-27. The latest fully successful target-native audit is [workflow run 40510507392](https://github.com/SoufianoDev/cage-xtmapper/actions/runs/40510507392), source commit **e5a294463b814b92bac5f7e7d12f683e154a1108**. All six target jobs passed. The matching multi-architecture ELF validation [run 40510508129](https://github.com/SoufianoDev/cage-xtmapper/actions/runs/40510508129) passed amd64 and arm64.
 
 ## Status rules
 
