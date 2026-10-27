@@ -10,7 +10,15 @@ permissions:
 
 jobs:
   package:
-    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-26.04
+          - architecture: arm64
+            runner: ubuntu-26.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -30,17 +38,58 @@ jobs:
           export CC=clang PKG_CONFIG_PATH="$PWD/build/native/pkgconfig"
           go vet ./...
           go test -race -count=1 ./...
+          bash tests/test-installer-local.sh --skip-build
 
       - name: Package versioned archive
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: go run ./tools/release package --version "$RELEASE_TAG" --output "cage-xtmapper-${RELEASE_TAG}.tar"
+          TARGET_ARCH: ${{ matrix.architecture }}
+        run: |
+          archive="cage-xtmapper-${RELEASE_TAG}-${TARGET_ARCH}.tar"
+          go run ./tools/release package --version "$RELEASE_TAG" --output "$archive"
+          sha256sum "$archive" > "$archive.sha256"
 
-      - name: Attach archive to the matching release
+      - name: Build standalone installer helper
+        env:
+          TARGET_ARCH: ${{ matrix.architecture }}
+        run: |
+          asset="cage-xtmapper-installer-linux-${TARGET_ARCH}"
+          GOOS=linux GOARCH="$TARGET_ARCH" CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$asset" ./tools/install
+          sha256sum "$asset" > "$asset.sha256"
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-${{ matrix.architecture }}
+          path: |
+            cage-xtmapper-${{ github.ref_name }}-${{ matrix.architecture }}.tar
+            cage-xtmapper-${{ github.ref_name }}-${{ matrix.architecture }}.tar.sha256
+            cage-xtmapper-installer-linux-${{ matrix.architecture }}
+            cage-xtmapper-installer-linux-${{ matrix.architecture }}.sha256
+          if-no-files-found: error
+
+  publish:
+    needs: package
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Download architecture-specific assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-assets-*
+          merge-multiple: true
+          path: dist
+
+      - name: Attach assets to the matching release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          files: cage-xtmapper-${{ github.ref_name }}.tar
+          files: |
+            dist/cage-xtmapper-*.tar
+            dist/cage-xtmapper-*.tar.sha256
+            dist/cage-xtmapper-installer-linux-amd64
+            dist/cage-xtmapper-installer-linux-amd64.sha256
+            dist/cage-xtmapper-installer-linux-arm64
+            dist/cage-xtmapper-installer-linux-arm64.sha256
           draft: true
           fail_on_unmatched_files: true
           overwrite_files: false

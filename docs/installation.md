@@ -19,45 +19,39 @@ The installer supports system-wide installation. Its production paths are fixed:
 /usr/local/bin/cage-xtmapper -> /opt/cage-xtmapper/current/cage-xtmapper
 ```
 
-There is one application ELF. The installer does not create a runtime shell wrapper or a second Cage executable. `install.sh` and `tools/` remain in the source checkout.
+There is one installed application ELF; the installer helper is a separate, temporary executable and is not retained in the installation. The bootstrap `install.sh` downloads a prebuilt helper from a published release, so end users do not need Go or a source checkout.
 
-Use Linux with Go 1.24+, Bash, `/proc`, local-filesystem `flock`, directory `fsync`, `renameat2(RENAME_NOREPLACE)`, and `O_TMPFILE` support. `install.sh` compiles the source-only Go tool into a private temporary directory, then executes its open inode after removing the temporary files. Go is not required to run the installed application. Unsupported filesystem operations fail explicitly. Production installation roots, their parents, and the binary directory must be root-owned, non-symlink directories without group/other write permission. `/opt` and `/usr/local/bin` must already exist.
+Use supported 64-bit Linux (amd64 or arm64), Bash, curl, `sha256sum`, `/proc`, local-filesystem `flock`, directory `fsync`, `renameat2(RENAME_NOREPLACE)`, and `O_TMPFILE` support. The helper validates the release archive before staging it. It checks the declared ELF interpreter, glibc baseline, and shared libraries; missing library packages are installed through APT on Debian/Ubuntu. Other distributions receive an explicit missing-library error rather than guessed package names. Waydroid and the XtMapper Android APK remain prerequisites and are not installed by this script. Production installation roots, their parents, and the binary directory must be root-owned, non-symlink directories without group/other write permission. `/opt` and `/usr/local/bin` must already exist.
 
 ## Commands
 
-Run from the matching source checkout:
+Run the bootstrap without an operation argument to let it inspect the system and choose the right action. It installs when no managed release exists, updates an older active release, reports `already up to date` when the selected latest archive is identical, and attempts recovery of a recorded incomplete transaction before continuing.
 
 ```bash
-sudo ./install.sh install --archive /absolute/path/release.tar
-sudo ./install.sh update --archive /absolute/path/new-release.tar
-./install.sh status
-sudo ./install.sh recover
-sudo ./install.sh uninstall
+curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-to-c-golang-no-submodule/install.sh | sudo bash
 ```
 
-Relative archive paths are relative to the calling directory. `--archive` is required for `install` and `update`, and rejected for the other commands. There is no persistent rollback command.
+You may pin a published release without selecting an explicit operation:
 
-| Command | Required State | Result |
-|---|---|---|
-| `install` | No active managed release; no conflicting files | Stage and activate a release. A prior uninstalled ownership record can be reused. |
-| `update` | Existing, intact managed installation | Activate a new release and remove the obsolete managed release. |
-| `status` | Any readable state | Report active release and any incomplete transaction without modifying installation state. Unknown/corrupt installations produce an error. |
-| `recover` | Managed state or a complete recorded bootstrap | Inspect the real `current` symlink and journal; roll back precommit staging or finish postcommit cleanup. Repeating successful recovery is harmless. |
-| `uninstall` | Existing, intact managed installation | Remove the recorded launcher link and managed release data. |
+```bash
+curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-to-c-golang-no-submodule/install.sh | sudo bash -s -- --version vX.Y.Z
+```
 
-System mutations require root. A runtime or another administrative process holding a conflicting lock causes an immediate busy error. A pending transaction blocks install, update, and uninstall until recovery completes.
+The bootstrap downloads the prebuilt helper and matching archive, verifies both SHA-256 checksums, and delegates the filesystem transaction to the Go installer. The release transport currently uses the versioned `.tar` format for Linux amd64 and arm64. The installer is structured for a future package-aware backend, but native `.deb`, `.rpm`, Arch/Pacman and Alpine/APK packages and repositories are not yet implemented.
 
-| Exit Status | Meaning |
+At present, the installer can install recognized missing shared-library packages through APT on Debian/Ubuntu. Other distributions receive explicit errors for missing libraries; package names are not guessed. Waydroid and the XtMapper Android APK remain prerequisites. System mutations require root, normally supplied by `sudo`. The bootstrap's default auto mode is the normal user-facing entry point; explicit operations are retained for diagnostics and maintenance.
+
+| Explicit Operation | Result |
 |---|---|
-| `0` | Operation completed, or status reported successfully. |
-| `1` | Operation failed; no retained transaction was identified. |
-| `2` | Invalid command-line syntax. |
-| `3` | Busy lock; active installation files were not changed. |
-| `4` | An incomplete transaction remains. Inspect status and recover; the active release depends on whether the commit point was crossed. |
+| `status` | Report the active release and any recorded incomplete transaction without modifying state. |
+| `recover` | Attempt recovery directly. Normal auto mode attempts this when it detects a recorded incomplete transaction. |
+| `uninstall` | Remove the recorded launcher link and managed release data while preserving unowned files and the stable ownership record. |
+| `install` / `update` | Force the corresponding operation choice; the default auto mode is preferred for routine use. |
 
-Errors go to stderr. Status uses JSON on stdout; mutating commands report the active release, removals, and intentionally preserved paths. The installer never executes the release ELF to validate it.
+Auto recovery is conservative. If the journal is valid, the installer determines whether the commit point was crossed and completes rollback or cleanup accordingly, then continues toward the selected release. If required ownership metadata is missing or an object has been modified, it reports the conflict and preserves it rather than guessing. A busy runtime lock is not forcibly broken; the installer reports that the application is still running or another administrative operation is active.
 
-Repeating a command in a state it does not apply to is a deliberate refusal, not a no-op: `install` with an active managed release, `update` whose archive has the release id that is already active, and `uninstall` without an installed release all fail with exit status 1 and change nothing. A refused operation stages no release, replaces no link, state record, ownership inventory, or lock, and writes no transaction journal. Identical archives are never re-staged over an existing release id; to redeploy the same version, uninstall first or publish it under a new release id. Refusals keep conflicting or modified files protected; inspect them with `status` and resolve them explicitly.
+The status command can be run without root. The installer does not execute the release ELF to validate it. SHA-256 checksums detect corruption but do not authenticate the publisher; this remains a documented limitation until release-signing or provenance verification is added.
+
 
 ## Ownership And Legacy Files
 
@@ -65,7 +59,7 @@ Repeating a command in a state it does not apply to is a deliberate refusal, not
 
 An arbitrary matching filename, symlink target, or checksum is insufficient to adopt a file. Existing unknown roots and launcher paths cause refusal. Root components, symlink components, hard links, unexpected file types, changed permissions, file capabilities, and changed owned content fail validation.
 
-The old documented procedure manually copied `/usr/local/bin/cage_xtmapper` and `/usr/local/bin/cage_xtmapper.sh`. It left no reliable installation receipt. Therefore either legacy path, including an unrelated symlink at that name, blocks install/update before activation. Inspect and move a conflicting file explicitly after establishing its ownership. The installer does not delete or adopt it.
+The old documented procedure manually copied `/usr/local/bin/cage_xtmapper` and `/usr/local/bin/cage_xtmapper.sh` without a reliable installation receipt. A regular shell file is recognized only when its shebang and XtMapper-specific content markers match the old launcher. After the new release is active, the script is moved to `cage_xtmapper.sh.legacy-backup-<id>` in the same directory; if it is paired with an executable ELF at `cage_xtmapper`, that binary is moved to `cage_xtmapper.legacy-backup-<id>` using the same random suffix. Both contents are preserved and neither backup is executed or deleted by migration. A changed or unknown script, any symlink at either legacy path, or an unpaired/non-ELF `cage_xtmapper` blocks installation until inspected. The installer does not guess ownership or remove unknown files.
 
 Uninstall verifies the recorded launcher symlink's inode and target before removing it. It removes only the recorded release files, then directories that are still owned and empty. Unknown or modified content inside a managed release causes safe refusal. Unrelated root entries, other links and their targets, Waydroid data/APKs, shared libraries/tools, Steam entries, and desktop/user configuration are preserved.
 
@@ -130,3 +124,16 @@ mkdir -m755 "$prefix/usr/local" "$prefix/usr/local/bin"
 ```
 
 This manages only `$prefix/opt/cage-xtmapper` and `$prefix/usr/local/bin/cage-xtmapper`. The Go integration suite creates and cleans its own private prefixes. Its named pause hooks are enabled only with a test prefix and write a checkpoint file there, so SIGKILL can exercise staging, activation, and partial cleanup without modifying the real system installation.
+
+
+## Developer Tests Without a GitHub Release
+
+Run the complete local installer lifecycle test:
+
+```bash
+bash tests/test-installer-local.sh
+```
+
+The script builds the application and helper locally, packages two temporary release archives, and exercises install, automatic update through the normal `install` command, repeated-install no-op behavior, status, and uninstall under an isolated private test prefix. It does not publish a GitHub Release or modify the real `/opt/cage-xtmapper` or `/usr/local/bin/cage-xtmapper` paths. CI can use `bash tests/test-installer-local.sh --skip-build` after the normal native build has completed.
+
+For testing the bootstrap shell script, set `XTMAPPER_INSTALLER_BIN` to a local helper path and pass `--archive FILE --test-prefix DIR`. This bypass is intended only for local development. Normal installations download and checksum-verify the helper and archive from a published release.

@@ -3,6 +3,7 @@ package install_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,10 +38,11 @@ func TestLifecycleAndStableLock(t *testing.T) {
 			t.Fatalf("status modified %s", path)
 		}
 	}
-	h.run("install", h.v1, 1)
-	_, stderr := h.run("update", h.v1, 1)
-	if strings.Contains(stderr, "Incomplete transaction") {
-		t.Fatal(stderr)
+	stateBeforeRepeat := readFile(t, filepath.Join(h.root, "state.json"))
+	h.run("install", h.v1, 0)
+	h.run("update", h.v1, 0)
+	if !bytes.Equal(stateBeforeRepeat, readFile(t, filepath.Join(h.root, "state.json"))) {
+		t.Fatal("repeating the active release changed installation state")
 	}
 	h.onlyRelease(h.id1)
 	h.run("update", h.v2, 0)
@@ -186,45 +188,38 @@ func TestAtomicActivation(t *testing.T) {
 	}
 }
 
-// TestRepeatedOperationsRefuseWithStateIntact pins the documented strict
-// command-state contract: repeating a command in a state it does not apply
-// to is a safe refusal (exit 1), not a silent no-op, and must leave the
-// active link, release set, state record, and journal handling untouched.
-func TestRepeatedOperationsRefuseWithStateIntact(t *testing.T) {
+// TestRepeatedOperationsAreIdempotent ensures the same release is not staged
+// again and that the installer reports the active release as current.
+func TestRepeatedOperationsAreIdempotent(t *testing.T) {
 	h := newHarness(t, false)
 	h.run("install", h.v1, 0)
 	stateBefore := readFile(t, filepath.Join(h.root, "state.json"))
 	lock := stat(t, filepath.Join(h.root, ".install.lock"))
 
-	// install against an active installation is refused without restaging.
-	_, stderr := h.run("install", h.v1, 1)
-	if !strings.Contains(stderr, "invalid install for the current installation state") {
-		t.Fatal(stderr)
+	stdout, _ := h.run("install", h.v1, 0)
+	if !strings.Contains(stdout, "Status: already up to date") {
+		t.Fatal(stdout)
 	}
 	if h.active() != "releases/"+h.id1 || !bytes.Equal(readFile(t, filepath.Join(h.root, "state.json")), stateBefore) {
-		t.Fatal("refused install modified the installation")
+		t.Fatal("repeated install changed the active installation")
 	}
 	h.onlyRelease(h.id1)
 
-	// update with the already-installed release is refused without adoption
-	// or replacement, and writes no transaction journal.
-	_, stderr = h.run("update", h.v1, 1)
-	if !strings.Contains(stderr, "release destination already exists") {
-		t.Fatal(stderr)
+	stdout, _ = h.run("update", h.v1, 0)
+	if !strings.Contains(stdout, "Status: already up to date") {
+		t.Fatal(stdout)
 	}
 	if h.active() != "releases/"+h.id1 || !bytes.Equal(readFile(t, filepath.Join(h.root, "state.json")), stateBefore) {
-		t.Fatal("refused update modified the installation")
+		t.Fatal("same-release update changed the active installation")
 	}
 	h.onlyRelease(h.id1)
 	if !os.SameFile(lock, stat(t, filepath.Join(h.root, ".install.lock"))) {
-		t.Fatal("refused operations replaced the install lock")
+		t.Fatal("idempotent operations replaced the install lock")
 	}
 
-	// uninstall removes the installation; a second uninstall is refused and
-	// preserves the completed removal.
 	h.run("uninstall", "", 0)
 	stateUninstalled := readFile(t, filepath.Join(h.root, "state.json"))
-	_, stderr = h.run("uninstall", "", 1)
+	_, stderr := h.run("uninstall", "", 1)
 	if !strings.Contains(stderr, "no installed release to uninstall") {
 		t.Fatal(stderr)
 	}
@@ -259,6 +254,160 @@ func TestLegacyRefusal(t *testing.T) {
 	h.run("uninstall", "", 0)
 	if string(readFile(t, path)) != "added after install\n" {
 		t.Fatal("uninstall removed legacy data")
+	}
+}
+
+func TestKnownLegacyShellAndBinaryMigrateAutomatically(t *testing.T) {
+	h := newHarness(t, false)
+	scriptPath := filepath.Join(h.bin, "cage_xtmapper.sh")
+	binaryPath := filepath.Join(h.bin, "cage_xtmapper")
+	legacy := []byte("#!/usr/bin/env bash\nBOOT_WAIT_SECONDS=${XTMAPPER_BOOT_WAIT_SECONDS:-120}\n# cage_xtmapper legacy launcher\n[[ $BOOT_WAIT_SECONDS =~ ^[1-9][0-9]*$ ]] || { echo 'XTMAPPER_BOOT_WAIT_SECONDS must be a positive integer'; exit 2; }\n")
+	writeFile(t, scriptPath, legacy, 0755)
+	testExecutable, err := os.Executable()
+	must(t, err)
+	binary, err := os.ReadFile(testExecutable)
+	must(t, err)
+	writeFile(t, binaryPath, binary, 0755)
+
+	stdout, _ := h.run("install", h.v1, 0)
+	assertAbsent(t, scriptPath)
+	assertAbsent(t, binaryPath)
+	if !strings.Contains(stdout, "Migrated legacy launcher to backup:") {
+		t.Fatal(stdout)
+	}
+	entries, err := os.ReadDir(h.bin)
+	must(t, err)
+	foundScript, foundBinary := false, false
+	for _, entry := range entries {
+		switch {
+		case strings.HasPrefix(entry.Name(), "cage_xtmapper.sh.legacy-backup-"):
+			foundScript = true
+			if !bytes.Equal(readFile(t, filepath.Join(h.bin, entry.Name())), legacy) {
+				t.Fatal("legacy shell backup content changed")
+			}
+		case strings.HasPrefix(entry.Name(), "cage_xtmapper.legacy-backup-"):
+			foundBinary = true
+			if !bytes.Equal(readFile(t, filepath.Join(h.bin, entry.Name())), binary) {
+				t.Fatal("legacy binary backup content changed")
+			}
+		}
+	}
+	if !foundScript || !foundBinary {
+		t.Fatalf("legacy pair was not preserved: script=%t binary=%t", foundScript, foundBinary)
+	}
+	h.onlyRelease(h.id1)
+}
+
+func TestLegacyMigrationNeverOverwritesExistingBackup(t *testing.T) {
+	h := newHarness(t, false)
+	scriptPath := filepath.Join(h.bin, "cage_xtmapper.sh")
+	legacy := []byte("#!/usr/bin/env bash\nBOOT_WAIT_SECONDS=\u0024{XTMAPPER_BOOT_WAIT_SECONDS:-120}\n# cage_xtmapper legacy launcher\n[[ \u0024BOOT_WAIT_SECONDS =~ ^[1-9][0-9]*\u0024 ]] || { echo 'XTMAPPER_BOOT_WAIT_SECONDS must be a positive integer'; exit 2; }\n")
+	writeFile(t, scriptPath, legacy, 0755)
+
+	p := h.pause("install", h.v1, "cleanup")
+	var tx struct {
+		ID string `json:"id"`
+	}
+	must(t, json.Unmarshal(readFile(t, filepath.Join(h.root, "transaction.json")), &tx))
+	if tx.ID == "" {
+		t.Fatal("transaction has no ID")
+	}
+	backup := scriptPath + ".legacy-backup-" + tx.ID
+	userData := []byte("pre-existing user backup\n")
+	writeFile(t, backup, userData, 0644)
+
+	must(t, p.cmd.Process.Signal(syscall.SIGCONT))
+	h.wait(p, 4)
+	if !bytes.Equal(readFile(t, scriptPath), legacy) || !bytes.Equal(readFile(t, backup), userData) {
+		t.Fatal("migration overwrote an existing backup or changed the legacy source")
+	}
+	if h.active() != "releases/"+h.id1 {
+		t.Fatal("a backup collision changed the active release")
+	}
+	stat(t, filepath.Join(h.root, "transaction.json"))
+
+	must(t, os.Remove(backup))
+	stdout, stderr := h.run("", h.v1, 0)
+	if stderr != "" || !strings.Contains(stdout, "Status: already up to date") {
+		t.Fatalf("migration did not resume after removing the conflict: stdout=%s stderr=%s", stdout, stderr)
+	}
+	if !bytes.Equal(readFile(t, scriptPath+".legacy-backup-"+tx.ID), legacy) {
+		t.Fatal("resumed migration did not preserve the original legacy file")
+	}
+	h.onlyRelease(h.id1)
+}
+
+func TestLegacyMigrationResumesAfterCrash(t *testing.T) {
+	h := newHarness(t, false)
+	h.run("install", h.v1, 0)
+
+	scriptPath := filepath.Join(h.bin, "cage_xtmapper.sh")
+	binaryPath := filepath.Join(h.bin, "cage_xtmapper")
+	legacy := []byte("#!/usr/bin/env bash\nBOOT_WAIT_SECONDS=\u0024{XTMAPPER_BOOT_WAIT_SECONDS:-120}\n# cage_xtmapper legacy launcher\n[[ \u0024BOOT_WAIT_SECONDS =~ ^[1-9][0-9]*\u0024 ]] || { echo 'XTMAPPER_BOOT_WAIT_SECONDS must be a positive integer'; exit 2; }\n")
+	writeFile(t, scriptPath, legacy, 0755)
+	testExecutable, err := os.Executable()
+	must(t, err)
+	binary, err := os.ReadFile(testExecutable)
+	must(t, err)
+	writeFile(t, binaryPath, binary, 0755)
+
+	p := h.pause("install", h.v1, "legacy-migrated")
+	must(t, p.cmd.Process.Kill())
+	h.wait(p, -1)
+	assertAbsent(t, scriptPath)
+	if _, err := os.Stat(binaryPath); err != nil {
+		t.Fatalf("binary should remain when the first rename is interrupted: %v", err)
+	}
+
+	stdout, stderr := h.run("", h.v1, 0)
+	if stderr != "" || !strings.Contains(stdout, "Status: already up to date") {
+		t.Fatalf("automatic recovery did not complete the migration: stdout=%s stderr=%s", stdout, stderr)
+	}
+	assertAbsent(t, scriptPath)
+	assertAbsent(t, binaryPath)
+
+	scriptBackups, err := filepath.Glob(scriptPath + ".legacy-backup-*")
+	must(t, err)
+	if len(scriptBackups) != 1 {
+		t.Fatalf("expected one script backup, got %v", scriptBackups)
+	}
+	suffix := strings.TrimPrefix(scriptBackups[0], scriptPath+".legacy-backup-")
+	binaryBackup := binaryPath + ".legacy-backup-" + suffix
+	if !bytes.Equal(readFile(t, scriptBackups[0]), legacy) || !bytes.Equal(readFile(t, binaryBackup), binary) {
+		t.Fatal("interrupted migration did not preserve both legacy files under the same backup ID")
+	}
+	h.onlyRelease(h.id1)
+}
+
+func TestInstallAutomaticallyUpdatesNewerRelease(t *testing.T) {
+	h := newHarness(t, false)
+	h.run("install", h.v1, 0)
+	h.run("install", h.v2, 0)
+	if h.active() != "releases/"+h.id2 {
+		t.Fatal("install did not activate the newer release")
+	}
+	h.onlyRelease(h.id2)
+}
+
+// TestAutomaticModeRecoversInterruptedTransactions verifies that the ordinary
+// no-operation entry point repairs a recorded transaction and then converges
+// to the selected release without requiring an explicit recover command.
+func TestAutomaticModeRecoversInterruptedTransactions(t *testing.T) {
+	for _, checkpoint := range []string{"before-commit", "after-commit"} {
+		t.Run(checkpoint, func(t *testing.T) {
+			h := newHarness(t, false)
+			h.run("install", h.v1, 0)
+			h.crash("update", h.v2, checkpoint)
+
+			stdout, stderr := h.run("", h.v2, 0)
+			if stderr != "" {
+				t.Fatal(stderr)
+			}
+			if checkpoint == "after-commit" && !strings.Contains(stdout, "Status: already up to date") {
+				t.Fatal(stdout)
+			}
+			h.onlyRelease(h.id2)
+		})
 	}
 }
 

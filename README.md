@@ -15,33 +15,31 @@ The `v0.2.0` and `v0.1.5` branches retain their own build and installation proce
 
 ## Install Or Update
 
-Use a release archive in the [managed release format](docs/installation.md#release-format), together with a matching source checkout. The source-only installer requires Bash, Go 1.24 or newer, and Linux. Installation is system-wide.
-
-From the source checkout, install your downloaded or locally built archive:
+Run the installer without an operation argument. It checks the current installation and selects the necessary action automatically: install if absent, update if an older release is active, report that the system is already current when the release matches, and recover a recorded interrupted transaction before proceeding when its ownership records are valid.
 
 ```bash
-sudo ./install.sh install --archive /path/to/cage-xtmapper-VERSION.tar
-./install.sh status
+curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-to-c-golang-no-submodule/install.sh | sudo bash
 ```
 
-The installer stores releases under `/opt/cage-xtmapper` and creates `/usr/local/bin/cage-xtmapper`. It checks the archive without running the downloaded application as root. Obtain archives from a trusted source; SHA-256 checksums verify integrity, not publisher authenticity.
-
-To replace an existing managed installation, close Cage XtMapper and run:
+To pin a published release, pass only the version option (the operation is still selected automatically):
 
 ```bash
-sudo ./install.sh update --archive /path/to/cage-xtmapper-NEW-VERSION.tar
+curl -fsSL https://raw.githubusercontent.com/SoufianoDev/cage-xtmapper/migrate-to-c-golang-no-submodule/install.sh | sudo bash -s -- --version vX.Y.Z
 ```
 
-An active application makes conflicting installation operations fail with a busy error. Successful updates remove the obsolete managed release. If an operation is interrupted, inspect and recover it:
+The bootstrap downloads the prebuilt helper and release archive for Linux amd64 or arm64, then verifies both SHA-256 checksums before installation. At this stage, releases still use the project's versioned `.tar` archive; native `.deb`, `.rpm`, Arch and Alpine package integration is a future extension, not a currently advertised capability. Runtime shared-library packages can currently be installed automatically through APT on Debian/Ubuntu; other distributions receive a clear missing-library error rather than guessed package names. Waydroid and the XtMapper Android APK remain prerequisites.
+
+The installer stores managed releases under `/opt/cage-xtmapper` and creates `/usr/local/bin/cage-xtmapper`. Updates switch releases atomically and remove only files recorded as installer-owned. A recognized old `cage_xtmapper.sh` launcher and its paired valid ELF are moved to uniquely named backups only after activation. Unknown files are preserved and may block installation until inspected. SHA-256 checksums detect corruption but do not authenticate the publisher.
+
+The same no-argument command can be run again safely. When the installed release exactly matches the newest selected archive, the installer reports `already up to date` instead of staging it again. Recorded incomplete transactions are recovered automatically when their journal and object identities are sufficient; if ownership cannot be verified, the installer stops and preserves conflicting data. Explicit `status`, `recover`, and `uninstall` operations remain available for diagnostics and maintenance.
+
+Developers can test automatic install, update, same-version no-op, status, and uninstall without publishing a GitHub Release:
 
 ```bash
-./install.sh status
-sudo ./install.sh recover
+bash tests/test-installer-local.sh
 ```
 
-Existing `cage_xtmapper` or `cage_xtmapper.sh` files cause a migration conflict because the old manual installation procedure did not record ownership. Inspect those files and move them explicitly after establishing what owns them, then retry. Old archives containing `usr/local/bin/` use the older branch's installer instructions.
-
-See [Installation And Recovery](docs/installation.md) for the commit point, ownership rules, error codes, test paths, and uninstall behavior.
+See [Installation And Recovery](docs/installation.md) for the ownership guarantees, legacy migration, recovery behavior, and local test options.
 
 ## Run
 

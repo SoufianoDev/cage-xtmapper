@@ -47,6 +47,15 @@ func (m *manager) begin(operation string, manifest *release.Manifest) error {
 			return fmt.Errorf("release destination already exists; it will not be adopted or replaced")
 		}
 	}
+	if manifest != nil || operation == "legacy-migrate" {
+		tx.LegacyMoves, err = m.planLegacyMoves(id)
+		if err != nil {
+			return err
+		}
+		if operation == "legacy-migrate" && len(tx.LegacyMoves) == 0 {
+			return fmt.Errorf("no recognized legacy launcher remains to migrate")
+		}
+	}
 	for _, path := range []string{filepath.Join(m.base, tx.Stage), filepath.Join(m.base, ".current-"+id), filepath.Join(m.bin, ".cage-xtmapper-"+id)} {
 		if exists(path) {
 			return fmt.Errorf("transaction reservation already exists: %s", path)
@@ -157,14 +166,131 @@ func (m *manager) recoverBootstrap() error {
 	return m.publishBootstrap()
 }
 
+func knownLegacyShell(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	content := string(data)
+	shebang := strings.HasPrefix(content, "#!/usr/bin/env bash") || strings.HasPrefix(content, "#!/bin/bash")
+	return shebang && strings.Contains(content, "cage_xtmapper") &&
+		strings.Contains(content, "XTMAPPER_BOOT_WAIT_SECONDS must be a positive integer")
+}
+
+func knownLegacyBinary(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 ||
+		info.Size() < 64 || info.Size() > release.MaxBytes {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	_, err = release.ELFArch(data)
+	return err == nil
+}
+
 func (m *manager) legacyConflicts() error {
+	legacyScript := filepath.Join(m.bin, "cage_xtmapper.sh")
+	scriptRecognized := knownLegacyShell(legacyScript)
 	for _, name := range []string{"cage_xtmapper", "cage_xtmapper.sh"} {
 		path := filepath.Join(m.bin, name)
-		if exists(path) {
-			return fmt.Errorf("legacy conflict: %s has no reliable ownership record; inspect/move it explicitly before installation", path)
+		if !exists(path) {
+			continue
+		}
+		if name == "cage_xtmapper.sh" && scriptRecognized {
+			continue
+		}
+		if name == "cage_xtmapper" && scriptRecognized && knownLegacyBinary(path) {
+			continue
+		}
+		return fmt.Errorf("legacy conflict: %s is not a verified legacy installation file and will be preserved; inspect it explicitly before installation", path)
+	}
+	return nil
+}
+
+func (m *manager) planLegacyMoves(id string) ([]legacyMove, error) {
+	script := filepath.Join(m.bin, "cage_xtmapper.sh")
+	binary := filepath.Join(m.bin, "cage_xtmapper")
+	if !exists(script) {
+		return nil, nil
+	}
+	if !knownLegacyShell(script) {
+		return nil, fmt.Errorf("legacy launcher changed or is not recognized; preserved: %s", script)
+	}
+	paths := []string{script}
+	if exists(binary) {
+		if !knownLegacyBinary(binary) {
+			return nil, fmt.Errorf("legacy binary is not a recognized executable ELF; preserved: %s", binary)
+		}
+		paths = append(paths, binary)
+	}
+	moves := make([]legacyMove, 0, len(paths))
+	for _, path := range paths {
+		recorded, err := fileRecord(path)
+		if err != nil {
+			return nil, err
+		}
+		name := filepath.Base(path)
+		backup := name + ".legacy-backup-" + id
+		if exists(filepath.Join(m.bin, backup)) {
+			return nil, fmt.Errorf("legacy backup path already exists; preserved: %s", filepath.Join(m.bin, backup))
+		}
+		moves = append(moves, legacyMove{Name: name, Backup: backup, Record: recorded})
+	}
+	return moves, nil
+}
+
+// migrateLegacyMoves resumes a recorded rename after interruption. Each rename
+// is atomic, and the journal identifies the expected inode at both names.
+func (m *manager) migrateLegacyMoves(tx *transaction) error {
+	for _, move := range tx.LegacyMoves {
+		source := filepath.Join(m.bin, move.Name)
+		backup := filepath.Join(m.bin, move.Backup)
+		sourceExists, backupExists := exists(source), exists(backup)
+		switch {
+		case sourceExists && !backupExists:
+			if _, err := checkRecord(source, &move.Record, false); err != nil {
+				return err
+			}
+			if err := renameNew(source, backup); err != nil {
+				return fmt.Errorf("could not preserve legacy file %s: %w", source, err)
+			}
+			if err := syncDir(m.bin); err != nil {
+				return err
+			}
+			m.migrated = append(m.migrated, backup)
+			if err := m.checkpoint("legacy-migrated"); err != nil {
+				return err
+			}
+		case !sourceExists && backupExists:
+			if _, err := checkRecord(backup, &move.Record, false); err != nil {
+				return err
+			}
+			m.migrated = append(m.migrated, backup)
+		default:
+			return fmt.Errorf("legacy migration state is ambiguous; source and backup are preserved: %s", source)
 		}
 	}
 	return nil
+}
+
+func sameReleaseFiles(r *ownedRelease, files map[string][]byte) bool {
+	if r == nil || len(r.Inventory) != len(files)+2 {
+		return false
+	}
+	for name, data := range files {
+		record, ok := r.Inventory[name]
+		if !ok || record.SHA256 != release.Digest(data) {
+			return false
+		}
+	}
+	return r.Inventory["."].Mode != 0 && r.Inventory["LICENSES"].Mode != 0
 }
 
 func (m *manager) tree(base string, r *ownedRelease, partial bool) error {
@@ -381,6 +507,15 @@ func (m *manager) reserveLinks() error {
 
 func (m *manager) isCommitted() (bool, error) {
 	path := filepath.Join(m.base, "current")
+	if m.tx.Operation == "legacy-migrate" {
+		if m.tx.NewRelease != nil || m.tx.OldRelease == nil || m.tx.OldCurrent == nil {
+			return false, fmt.Errorf("invalid legacy migration transaction")
+		}
+		if _, err := checkRecord(path, m.tx.OldCurrent, false); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
 	if m.tx.Operation == "uninstall" {
 		if !exists(path) {
 			return true, nil
@@ -485,54 +620,83 @@ func (m *manager) finish() error {
 	}
 	tx, s := m.tx, m.state
 	if committed {
-		if tx.NewRelease != nil {
-			if err := m.tree(m.releasePath(tx.NewRelease), tx.NewRelease, false); err != nil {
+		if tx.Operation == "legacy-migrate" {
+			if tx.NewRelease != nil || tx.OldRelease == nil ||
+				!reflect.DeepEqual(tx.OldRelease, s.Release) ||
+				!reflect.DeepEqual(tx.OldCurrent, s.Current) ||
+				!reflect.DeepEqual(tx.OldLauncher, s.Launcher) {
+				return fmt.Errorf("legacy migration no longer matches the active installation")
+			}
+			if err := m.active(); err != nil {
 				return err
 			}
-			launcher := filepath.Join(m.bin, release.App)
-			if tx.OldLauncher != nil {
-				if _, err := checkRecord(launcher, tx.OldLauncher, false); err != nil {
-					return err
-				}
-			} else if !exists(launcher) {
-				if _, err := checkRecord(m.launcherTemp(), tx.NextLauncher, false); err != nil {
-					return err
-				}
-				if err := renameNew(m.launcherTemp(), launcher); err != nil {
-					return err
-				}
-				if err := syncDir(m.bin); err != nil {
-					return err
-				}
-			} else if _, err := checkRecord(launcher, tx.NextLauncher, false); err != nil {
+			tx.Phase = "cleanup"
+			if err := m.saveTx(); err != nil {
 				return err
 			}
-			s.Release, s.Current, s.Launcher = tx.NewRelease, tx.NextCurrent, tx.OldLauncher
-			if s.Launcher == nil {
-				s.Launcher = tx.NextLauncher
+			if err := m.checkpoint("cleanup"); err != nil {
+				return err
+			}
+			if err := m.migrateLegacyMoves(tx); err != nil {
+				return err
 			}
 		} else {
-			if err := m.removeLink(filepath.Join(m.bin, release.App), tx.OldLauncher); err != nil {
+			if tx.NewRelease != nil {
+				if err := m.tree(m.releasePath(tx.NewRelease), tx.NewRelease, false); err != nil {
+					return err
+				}
+				launcher := filepath.Join(m.bin, release.App)
+				if tx.OldLauncher != nil {
+					if _, err := checkRecord(launcher, tx.OldLauncher, false); err != nil {
+						return err
+					}
+				} else if !exists(launcher) {
+					if _, err := checkRecord(m.launcherTemp(), tx.NextLauncher, false); err != nil {
+						return err
+					}
+					if err := renameNew(m.launcherTemp(), launcher); err != nil {
+						return err
+					}
+					if err := syncDir(m.bin); err != nil {
+						return err
+					}
+				} else if _, err := checkRecord(launcher, tx.NextLauncher, false); err != nil {
+					return err
+				}
+				s.Release, s.Current, s.Launcher = tx.NewRelease, tx.NextCurrent, tx.OldLauncher
+				if s.Launcher == nil {
+					s.Launcher = tx.NextLauncher
+				}
+			} else {
+				if err := m.removeLink(filepath.Join(m.bin, release.App), tx.OldLauncher); err != nil {
+					return err
+				}
+				s.Release, s.Current, s.Launcher = nil, nil, nil
+			}
+			if err := m.save("state.json", s); err != nil {
 				return err
 			}
-			s.Release, s.Current, s.Launcher = nil, nil, nil
-		}
-		if err := m.save("state.json", s); err != nil {
-			return err
-		}
-		tx.Phase = "cleanup"
-		if err := m.saveTx(); err != nil {
-			return err
-		}
-		if err := m.checkpoint("cleanup"); err != nil {
-			return err
-		}
-		if old := tx.OldRelease; old != nil {
-			if tx.NewRelease != nil && old.ID == tx.NewRelease.ID {
-				return fmt.Errorf("refusing to delete the active release")
-			}
-			if err := m.removeTree(m.releasePath(old), old); err != nil {
+			tx.Phase = "cleanup"
+			if err := m.saveTx(); err != nil {
 				return err
+			}
+			if err := m.checkpoint("cleanup"); err != nil {
+				return err
+			}
+			// Preserve the transaction journal while completing all post-commit
+			// work, so a later invocation can safely resume after SIGKILL.
+			if len(tx.LegacyMoves) > 0 {
+				if err := m.migrateLegacyMoves(tx); err != nil {
+					return err
+				}
+			}
+			if old := tx.OldRelease; old != nil {
+				if tx.NewRelease != nil && old.ID == tx.NewRelease.ID {
+					return fmt.Errorf("refusing to delete the active release")
+				}
+				if err := m.removeTree(m.releasePath(old), old); err != nil {
+					return err
+				}
 			}
 		}
 	} else {
@@ -641,6 +805,56 @@ func (m *manager) recoverScaffolding(stage string, r *ownedRelease) error {
 	return m.saveTx()
 }
 
+// auto resolves a recorded interrupted transaction before converging the install
+// to the supplied release. Unknown or modified state is never force-cleaned.
+func (m *manager) auto(archive string) error {
+	operation := "install"
+
+	if !exists(m.root) {
+		candidates, err := m.bootstrapCandidates()
+		if err != nil {
+			return err
+		}
+		if len(candidates) != 0 {
+			if err := m.recover(); err != nil {
+				return fmt.Errorf("automatic recovery failed: %w", err)
+			}
+			if m.state != nil && m.state.Release != nil {
+				operation = "update"
+			}
+			if m.lock != nil {
+				if err := m.lock.Close(); err != nil {
+					return err
+				}
+				m.lock = nil
+			}
+			return m.change(operation, archive)
+		}
+		return m.change(operation, archive)
+	}
+
+	if err := m.load(true); err != nil {
+		return err
+	}
+	if m.tx != nil {
+		if err := m.finish(); err != nil {
+			return fmt.Errorf("automatic recovery failed: %w", err)
+		}
+	} else if err := m.active(); err != nil {
+		return err
+	}
+	if m.state != nil && m.state.Release != nil {
+		operation = "update"
+	}
+	if m.lock != nil {
+		if err := m.lock.Close(); err != nil {
+			return err
+		}
+		m.lock = nil
+	}
+	return m.change(operation, archive)
+}
+
 func (m *manager) change(operation, archive string) error {
 	if err := m.legacyConflicts(); err != nil {
 		return err
@@ -660,6 +874,12 @@ func (m *manager) change(operation, archive string) error {
 		if exists(filepath.Join(m.bin, release.App)) {
 			return fmt.Errorf("launcher path already exists and is not owned by this installation")
 		}
+		// No managed installation lock exists yet during first installation.
+		if m.prefix == "" {
+			if err := ensureRuntimeDependencies(manifest.RuntimeRequirements); err != nil {
+				return err
+			}
+		}
 		if err := m.bootstrap(manifest); err != nil {
 			return err
 		}
@@ -673,8 +893,33 @@ func (m *manager) change(operation, archive string) error {
 		if err := m.active(); err != nil {
 			return err
 		}
+		if m.state.Release != nil && operation == "install" {
+			operation = "update"
+		}
 		if (m.state.Release != nil) != (operation == "update") {
 			return fmt.Errorf("invalid %s for the current installation state", operation)
+		}
+		// The exclusive installation lock is held before inspecting or changing
+		// system packages; a running app must cause an immediate busy failure.
+		if m.prefix == "" {
+			if err := ensureRuntimeDependencies(manifest.RuntimeRequirements); err != nil {
+				return err
+			}
+		}
+		if m.state.Release != nil && m.state.Release.ID == manifest.ReleaseID {
+			if sameReleaseFiles(m.state.Release, files) {
+				if exists(filepath.Join(m.bin, "cage_xtmapper.sh")) {
+					if err := m.begin("legacy-migrate", nil); err != nil {
+						return err
+					}
+					if err := m.finish(); err != nil {
+						return err
+					}
+				}
+				m.upToDate = true
+				return nil
+			}
+			return fmt.Errorf("release ID is already active but archive content differs; refusing replacement")
 		}
 		if err := m.begin(operation, manifest); err != nil {
 			return err
@@ -716,7 +961,10 @@ func (m *manager) change(operation, archive string) error {
 	if err := m.checkpoint("after-commit"); err != nil {
 		return err
 	}
-	return m.finish()
+	if err := m.finish(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (m *manager) uninstall() error {

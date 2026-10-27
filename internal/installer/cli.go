@@ -46,8 +46,14 @@ func (m *manager) status() (map[string]any, error) {
 }
 
 func (m *manager) report(output io.Writer) error {
+	if m.upToDate {
+		fmt.Fprintln(output, "Status: already up to date")
+	}
 	for _, path := range m.removed {
 		fmt.Fprintln(output, "Removed:", path)
+	}
+	for _, path := range m.migrated {
+		fmt.Fprintln(output, "Migrated legacy launcher to backup:", path)
 	}
 	active := "none"
 	if m.state != nil {
@@ -81,33 +87,45 @@ func (m *manager) report(output io.Writer) error {
 // Run returns the documented installer status, including busy (3) and recovery (4).
 func Run(args []string, output, diagnostics io.Writer) int {
 	usage := func() {
-		fmt.Fprintln(diagnostics, "Usage: install.sh install|update --archive FILE [--test-prefix DIR]")
+		fmt.Fprintln(diagnostics, "Usage: install.sh [auto] --archive FILE [--test-prefix DIR]")
+		fmt.Fprintln(diagnostics, "       install.sh install|update --archive FILE [--test-prefix DIR]")
 		fmt.Fprintln(diagnostics, "       install.sh status|recover|uninstall [--test-prefix DIR]")
+		fmt.Fprintln(diagnostics, "The default mode recovers recorded transactions, then installs, updates, or reports the active release is current.")
 	}
-	if len(args) == 0 {
-		usage()
-		return 2
+	operation := "auto"
+	operationArgs := args
+	if len(args) > 0 {
+		switch args[0] {
+		case "auto", "install", "update", "status", "recover", "uninstall", "--help", "-h":
+			operation = args[0]
+			operationArgs = args[1:]
+		default:
+			if len(args[0]) > 0 && args[0][0] != '-' {
+				operation = args[0]
+				operationArgs = args[1:]
+			}
+		}
 	}
-	operation := args[0]
 	if operation == "--help" || operation == "-h" {
 		usage()
 		return 0
 	}
-	if operation != "install" && operation != "update" && operation != "status" && operation != "recover" && operation != "uninstall" {
+	if operation != "auto" && operation != "install" && operation != "update" && operation != "status" && operation != "recover" && operation != "uninstall" {
 		usage()
 		return 2
 	}
 	flags := flag.NewFlagSet("install.sh "+operation, flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
-	archive := flags.String("archive", "", "explicit local release .tar (install/update only)")
+	archive := flags.String("archive", "", "explicit local release .tar (auto/install/update)")
 	prefix := flags.String("test-prefix", "", "existing private test root containing opt/ and usr/local/bin/")
-	if err := flags.Parse(args[1:]); err != nil {
+	if err := flags.Parse(operationArgs); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 2
 	}
-	if flags.NArg() != 0 || (*archive != "") != (operation == "install" || operation == "update") {
+	needsArchive := operation == "auto" || operation == "install" || operation == "update"
+	if flags.NArg() != 0 || (*archive != "") != needsArchive {
 		usage()
 		return 2
 	}
@@ -127,6 +145,8 @@ func Run(args []string, output, diagnostics io.Writer) int {
 	}
 	if err == nil {
 		switch operation {
+		case "auto":
+			err = m.auto(*archive)
 		case "install", "update":
 			err = m.change(operation, *archive)
 		case "uninstall":

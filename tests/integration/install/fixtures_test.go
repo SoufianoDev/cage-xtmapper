@@ -81,6 +81,7 @@ func archiveBytes(t *testing.T, files map[string][]byte) []byte {
 type harness struct {
 	t                                  *testing.T
 	repo, workspace, prefix, root, bin string
+	installer                          string
 	v1, v2, id1, id2                   string
 	binary                             []byte
 }
@@ -104,7 +105,14 @@ func newHarness(t *testing.T, native bool) *harness {
 	workspace, err := os.MkdirTemp(home, ".cage-install-test-*")
 	must(t, err)
 	t.Cleanup(func() { must(t, os.RemoveAll(workspace)) })
-	h := &harness{t: t, repo: repo, workspace: workspace, prefix: filepath.Join(workspace, "prefix"), binary: readFile(t, binary)}
+	helper := filepath.Join(workspace, "install-helper")
+	build := exec.Command("go", "build", "-trimpath", "-o", helper, "./tools/install")
+	build.Dir = repo
+	build.Env = append(cleanEnv(), "CGO_ENABLED=0")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build local installer helper: %v\\n%s", err, output)
+	}
+	h := &harness{t: t, repo: repo, workspace: workspace, prefix: filepath.Join(workspace, "prefix"), installer: helper, binary: readFile(t, binary)}
 	must(t, os.Mkdir(h.prefix, 0700))
 	for _, name := range []string{"opt", "usr", "usr/local", "usr/local/bin"} {
 		path := filepath.Join(h.prefix, name)
@@ -126,7 +134,11 @@ func (h *harness) archive(version string) (string, string) {
 }
 
 func (h *harness) args(operation, archive string) []string {
-	args := []string{operation, "--test-prefix", h.prefix}
+	args := []string{}
+	if operation != "" {
+		args = append(args, operation)
+	}
+	args = append(args, "--test-prefix", h.prefix)
 	if archive != "" {
 		args = append(args, "--archive", archive)
 	}
@@ -136,7 +148,7 @@ func (h *harness) args(operation, archive string) []string {
 func cleanEnv() []string {
 	var env []string
 	for _, value := range os.Environ() {
-		if !strings.HasPrefix(value, "CAGE_XTMAPPER_TEST_PAUSE=") && !strings.HasPrefix(value, "CAGE_XTMAPPER_LOCK_FD=") {
+		if !strings.HasPrefix(value, "CAGE_XTMAPPER_TEST_PAUSE=") && !strings.HasPrefix(value, "CAGE_XTMAPPER_LOCK_FD=") && !strings.HasPrefix(value, "XTMAPPER_INSTALLER_BIN=") {
 			env = append(env, value)
 		}
 	}
@@ -148,7 +160,7 @@ func (h *harness) run(operation, archive string, code int) (string, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, filepath.Join(h.repo, "install.sh"), h.args(operation, archive)...)
-	cmd.Env = cleanEnv()
+	cmd.Env = append(cleanEnv(), "XTMAPPER_INSTALLER_BIN="+h.installer)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
@@ -244,7 +256,7 @@ func (h *harness) pause(operation, archive, checkpoint string) *process {
 		h.t.Fatal(err)
 	}
 	args := append([]string{filepath.Join(h.repo, "install.sh")}, h.args(operation, archive)...)
-	p := h.start(args, append(cleanEnv(), "CAGE_XTMAPPER_TEST_PAUSE="+checkpoint))
+	p := h.start(args, append(cleanEnv(), "XTMAPPER_INSTALLER_BIN="+h.installer, "CAGE_XTMAPPER_TEST_PAUSE="+checkpoint))
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		data, _ := os.ReadFile(ready)
