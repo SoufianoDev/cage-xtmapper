@@ -8,6 +8,11 @@ set -eu
 : "${TARGET_ARCH:=amd64}"
 
 root=$(pwd -P)
+# The checkout is bind-mounted from the hosted runner and may be owned by a
+# different UID than the container user. Allow this exact repository so Go
+# can retain VCS metadata rather than failing its automatic build stamping.
+git config --global --add safe.directory "$root"
+git -C "$root" rev-parse --is-inside-work-tree >/dev/null
 audit="$root/build/target-audit/$TARGET_ID"
 mkdir -p "$audit"
 
