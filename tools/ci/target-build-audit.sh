@@ -10,11 +10,15 @@ set -eu
 root=$(pwd -P)
 audit="$root/build/target-audit/$TARGET_ID"
 mkdir -p "$audit"
+# Container root creates some build outputs with mode 0600. Always make the
+# evidence readable by actions/upload-artifact, including on failure.
+trap 'chmod -R a+rX "$audit" 2>/dev/null || true' EXIT
 
 record_environment() {
   {
     echo "target_id=$TARGET_ID"
     echo "target_image=$TARGET_IMAGE"
+    echo "target_image_digest=${TARGET_IMAGE_DIGEST:-unknown}"
     echo "target_arch=$TARGET_ARCH"
     echo "source_commit=$(git rev-parse HEAD 2>/dev/null || echo unknown)"
     echo "workflow_sha=$GITHUB_SHA"
@@ -113,6 +117,9 @@ if grep -q 'not found' "$audit/loader-resolution.txt"; then
 fi
 
 mkdir -p "$audit/meson"
+# Preserve dependency/link provenance even if a later packaging or license
+# check fails; this makes target-specific failures diagnosable from the artifact.
+cp build/native/pkgconfig/cage-xtmapper-native.pc "$audit/cage-xtmapper-native.pc"
 for name in intro-dependencies.json intro-buildoptions.json intro-projectinfo.json intro-compilers.json; do
   test -f "$meson_info/$name"
   cp "$meson_info/$name" "$audit/meson/$name"
@@ -132,7 +139,10 @@ sha256sum "$binary" "$audit/manifest.json" "$archive" > "$audit/SHA256SUMS"
 
 case "$TARGET_ID" in
   debian-13|ubuntu-24.04|ubuntu-26.04)
-    package_version="0~ci$GITHUB_RUN_ID"
+    # Keep the diagnostic package version within the release manifest's
+    # conservative [A-Za-z0-9._-] version grammar (tilde is valid Debian
+    # syntax but intentionally not accepted by the project's archive format).
+    package_version="0.0.0-ci$GITHUB_RUN_ID"
     package="$audit/cage-xtmapper_${package_version}_$(dpkg --print-architecture).deb"
     export PACKAGE_MAINTAINER="Cage XtMapper CI <ci@example.invalid>"
     if ! bash tools/package/build-deb.sh "$package_version" "$package" > "$audit/deb-package.log" 2>&1; then
