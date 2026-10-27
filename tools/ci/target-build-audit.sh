@@ -40,17 +40,18 @@ case "$TARGET_ID" in
       bash ca-certificates curl xz-utils file binutils git clang bison \
       meson ninja-build pkg-config golang-go libffi-dev libexpat1-dev \
       libxml2-dev libwayland-dev libseat-dev libxkbcommon-dev \
-      libpixman-1-dev libudev-dev libinput-dev libdrm-dev hwdata scdoc \
-      libgbm-dev libgles-dev libegl-dev wayland-protocols
+      libpixman-1-dev libudev-dev libinput-dev libdrm-dev \
+      libdisplay-info-dev libliftoff-dev hwdata scdoc libgbm-dev \
+      libgles-dev libegl-dev wayland-protocols
     ;;
   fedora-44)
     dnf install -y \
       bash ca-certificates curl xz file binutils git clang bison meson \
       ninja-build pkgconf-pkg-config go libffi-devel expat-devel \
       libxml2-devel wayland-devel libxkbcommon-devel pixman-devel \
-      libinput-devel libdrm-devel mesa-libEGL-devel mesa-libGLES-devel \
-      mesa-libgbm-devel seatd-devel systemd-devel hwdata scdoc \
-      wayland-protocols-devel
+      libinput-devel libdrm-devel libdisplay-info-devel libliftoff-devel \
+      mesa-libEGL-devel mesa-libGLES-devel mesa-libgbm-devel libseat-devel \
+      systemd-devel hwdata scdoc wayland-protocols-devel
     ;;
   archlinux)
     pacman -Syu --noconfirm --needed \
