@@ -219,8 +219,6 @@ assert_installed_version() {
 
 previous_version="0.0.$((GITHUB_RUN_ID - 1))"
 package_version="0.0.$GITHUB_RUN_ID"
-# Reuse one disposable signing key across all APK builds in this container job.
-export APK_CI_KEY_DIR="$audit/apk-ci-key"
 
 case "$TARGET_ID" in
   debian-13|ubuntu-24.04|ubuntu-26.04)
