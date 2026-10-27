@@ -60,6 +60,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.27.3'
+          cache: false
 
       - name: Record host Go root
         run: echo "HOST_GO_ROOT=$(go env GOROOT)" >> "$GITHUB_ENV"
