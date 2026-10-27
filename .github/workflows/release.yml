@@ -321,6 +321,62 @@ jobs:
           } > dist/native-package-index.md
           (cd dist && sha256sum native-package-index.md > native-package-index.md.sha256)
 
+      - name: Refuse to modify published releases or overwrite existing tag assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(mktemp)"
+          status="$(curl --silent --show-error --output "$response" --write-out '%{http_code}' \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+
+          if [[ "$status" == 404 ]]; then
+            rm -f "$response"
+            echo "No release exists for this tag; the workflow may create a draft."
+            exit 0
+          fi
+          if [[ "$status" != 200 ]]; then
+            cat "$response" >&2
+            echo "Could not safely inspect release $RELEASE_TAG (HTTP $status)." >&2
+            exit 1
+          fi
+          if jq -e '.draft == false or .published_at != null' "$response" >/dev/null; then
+            echo "Refusing to modify an already-published release for $RELEASE_TAG." >&2
+            exit 1
+          fi
+
+          existing_names="$(jq -r '.assets[]?.name' "$response")"
+          for path in \
+            dist/cage-xtmapper-*.tar \
+            dist/cage-xtmapper-*.tar.sha256 \
+            dist/cage-xtmapper-installer-linux-amd64 \
+            dist/cage-xtmapper-installer-linux-amd64.sha256 \
+            dist/cage-xtmapper-installer-linux-arm64 \
+            dist/cage-xtmapper-installer-linux-arm64.sha256 \
+            dist/cage-xtmapper-"$RELEASE_TAG"-*.deb \
+            dist/cage-xtmapper-"$RELEASE_TAG"-*.deb.sha256 \
+            dist/cage-xtmapper-"$RELEASE_TAG"-*.rpm \
+            dist/cage-xtmapper-"$RELEASE_TAG"-*.rpm.sha256 \
+            dist/cage-xtmapper-"$RELEASE_TAG"-*.pkg.tar.zst \
+            dist/cage-xtmapper-"$RELEASE_TAG"-*.pkg.tar.zst.sha256 \
+            dist/cage-xtmapper-"$RELEASE_TAG"-*.apk \
+            dist/cage-xtmapper-"$RELEASE_TAG"-*.apk.sha256 \
+            dist/native-package-index.md \
+            dist/native-package-index.md.sha256; do
+            [[ -f "$path" ]] || continue
+            name="$(basename "$path")"
+            if grep -Fxq "$name" <<< "$existing_names"; then
+              echo "Refusing to overwrite existing asset $name on tag $RELEASE_TAG." >&2
+              exit 1
+            fi
+          done
+          rm -f "$response"
+
       - name: Attach assets to the matching draft release
         uses: softprops/action-gh-release@v2
         with:
