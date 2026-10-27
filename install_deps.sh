@@ -26,7 +26,7 @@ distro=$(awk -F= '$1 == "ID" {gsub(/["\047]/, "", $2); print tolower($2); exit}'
 distro_like=$(awk -F= '$1 == "ID_LIKE" {gsub(/["\047]/, "", $2); print tolower($2); exit}' "$os_release")
 
 debian_deps=(build-essential clang git golang-go bison meson ninja-build pkg-config libffi-dev libexpat1-dev libxml2-dev libwayland-dev libseat-dev libxkbcommon-dev libpixman-1-dev libudev-dev libinput-dev libdrm-dev libdisplay-info-dev libliftoff-dev hwdata scdoc libgbm-dev libgles-dev libegl-dev wayland-protocols)
-fedora_deps=(clang git golang bison meson ninja-build pkgconf-pkg-config libffi-devel expat-devel libxml2-devel wayland-devel libxkbcommon-devel pixman-devel libinput-devel libdrm-devel mesa-libEGL-devel mesa-libGLES-devel mesa-libgbm-devel seatd-devel systemd-devel libdisplay-info-devel libliftoff-devel hwdata scdoc wayland-protocols-devel)
+fedora_deps=(clang git golang bison meson ninja-build pkgconf-pkg-config libffi-devel expat-devel libxml2-devel wayland-devel libxkbcommon-devel pixman-devel libinput-devel libdrm-devel mesa-libEGL-devel mesa-libGLES-devel mesa-libgbm-devel libseat-devel systemd-devel libdisplay-info-devel libliftoff-devel hwdata scdoc wayland-protocols-devel)
 arch_deps=(base-devel clang git go bison meson ninja pkgconf libffi expat libxml2 wayland wayland-protocols libxkbcommon pixman libinput libdrm mesa seatd systemd-libs scdoc hwdata libdisplay-info libliftoff)
 alpine_deps=(build-base clang git go bison meson ninja pkgconf libffi-dev expat-dev libxml2-dev wayland-dev libxkbcommon-dev pixman-dev libinput-dev libdrm-dev mesa-dev libseat-dev eudev-dev scdoc hwdata wayland-protocols)
 
