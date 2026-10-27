@@ -42,7 +42,7 @@ The portable payload uses the same executable/manifest/license identity and cont
 
 ## Legacy installer ownership boundary
 
-The existing bootstrap manages /opt/cage-xtmapper and /usr/local/bin/cage-xtmapper. Native package candidates use /usr/bin/cage-xtmapper and do not claim ownership of the bootstrap paths. The current package pre-install guards refuse installation when the legacy tree or launcher exists, because /usr/local/bin can shadow /usr/bin.
+The existing bootstrap manages /opt/cage-xtmapper and /usr/local/bin/cage-xtmapper. Native package candidates use /usr/bin/cage-xtmapper and do not claim ownership of the bootstrap paths. The Debian preinst and RPM %pre guards fail installation if the legacy tree or launcher exists. Arch and Alpine package scriptlets only warn because their package managers may complete the transaction despite scriptlet failure; /usr/local/bin can still shadow /usr/bin. The CI audit records this behavior and verifies that legacy files are preserved, but this does not implement migration/coexistence.
 
 This is a protective conflict check, not a migration implementation. Existing files are not removed or silently transferred. Migration, rollback/recovery, coexistence and preservation of modified/unowned files still require dedicated lifecycle tests before native packages become the default installation method.
 

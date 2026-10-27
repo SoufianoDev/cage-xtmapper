@@ -289,16 +289,19 @@ expect_legacy_conflict_refused() {
   chmod 0755 "$legacy_launcher"
 
   if "$@" > "$audit/$suffix.log" 2>&1; then
-    echo "Package manager accepted installation despite bootstrap-owned paths ($TARGET_ID)." >&2
-    cat "$audit/$suffix.log" >&2
-    exit 1
+    status=0
   else
     status=$?
   fi
   printf 'exit_status=%s\n' "$status" > "$audit/$suffix.status"
 
+  if [ "$status" -eq 0 ]; then
+    echo "Package manager succeeded despite bootstrap-owned paths ($TARGET_ID)." >&2
+    cat "$audit/$suffix.log" >&2
+    exit 1
+  fi
   if ! grep -Fq 'Remove the previous managed installation deliberately' "$audit/$suffix.log"; then
-    echo "Install failed for a reason other than the expected legacy-path guard ($TARGET_ID)." >&2
+    echo "Install failed for a reason other than the expected strict legacy-path guard ($TARGET_ID)." >&2
     cat "$audit/$suffix.log" >&2
     exit 1
   fi
@@ -308,7 +311,7 @@ expect_legacy_conflict_refused() {
     exit 1
   fi
   if [ -e /usr/bin/cage-xtmapper ] || [ -L /usr/bin/cage-xtmapper ]; then
-    echo "Package executable appeared despite the legacy-path guard ($TARGET_ID)." >&2
+    echo "Package executable appeared despite the strict legacy-path guard ($TARGET_ID)." >&2
     exit 1
   fi
 
@@ -326,25 +329,90 @@ expect_legacy_conflict_refused() {
         exit 1
       fi
       ;;
-    archlinux)
-      if pacman -Q cage-xtmapper >/dev/null 2>&1; then
-        echo "Pacman package was installed despite its pre_install guard." >&2
-        exit 1
-      fi
-      ;;
-    alpine-3.24)
-      if apk info --exists cage-xtmapper >/dev/null 2>&1; then
-        echo "APK was installed despite its pre-install guard." >&2
-        exit 1
-      fi
-      ;;
   esac
 
   rm -f "$legacy_root/sentinel" "$legacy_launcher"
   rmdir "$legacy_root"
   {
     echo "result=passed"
+    echo "guard=hard-failure"
     echo "package_installed=false"
+    echo "legacy_root_sentinel=preserved"
+    echo "legacy_launcher_sentinel=preserved"
+  } > "$audit/$suffix.result"
+}
+
+expect_legacy_conflict_warning() {
+  suffix="$1"
+  shift
+  legacy_root=/opt/cage-xtmapper
+  legacy_launcher=/usr/local/bin/cage-xtmapper
+
+  for path in "$legacy_root" "$legacy_launcher"; do
+    if [ -e "$path" ] || [ -L "$path" ]; then
+      echo "Cannot run legacy-warning fixture: target image already contains $path." >&2
+      exit 2
+    fi
+  done
+
+  mkdir -p "$legacy_root" /usr/local/bin
+  printf 'legacy-root-sentinel\n' > "$legacy_root/sentinel"
+  printf '#!/bin/sh\n# legacy-launcher-sentinel\nexit 0\n' > "$legacy_launcher"
+  chmod 0755 "$legacy_launcher"
+
+  if "$@" > "$audit/$suffix.log" 2>&1; then
+    status=0
+  else
+    status=$?
+    cat "$audit/$suffix.log" >&2
+    echo "Warning-only package install unexpectedly failed ($TARGET_ID, $suffix)." >&2
+    exit "$status"
+  fi
+  printf 'exit_status=%s\n' "$status" > "$audit/$suffix.status"
+
+  if ! grep -Fq 'WARNING: a bootstrap-managed or local installation may shadow /usr/bin/cage-xtmapper.' "$audit/$suffix.log"; then
+    echo "Expected legacy-shadow warning was not emitted ($TARGET_ID)." >&2
+    cat "$audit/$suffix.log" >&2
+    exit 1
+  fi
+  if [ "$(cat "$legacy_root/sentinel")" != "legacy-root-sentinel" ] ||
+     ! grep -Fq 'legacy-launcher-sentinel' "$legacy_launcher"; then
+    echo "Legacy sentinel content changed after warning-only install ($TARGET_ID)." >&2
+    exit 1
+  fi
+  if [ ! -x /usr/bin/cage-xtmapper ]; then
+    echo "Package manager did not leave the candidate executable installed after the warning ($TARGET_ID)." >&2
+    exit 1
+  fi
+
+  case "$TARGET_ID" in
+    archlinux)
+      pacman -Q cage-xtmapper > "$audit/$suffix-installed-package.txt"
+      run_logged "$suffix-cleanup" pacman -R --noconfirm cage-xtmapper
+      ;;
+    alpine-3.24)
+      apk info -vv cage-xtmapper > "$audit/$suffix-installed-package.txt"
+      run_logged "$suffix-cleanup" apk del cage-xtmapper
+      ;;
+    *)
+      echo "Warning-only conflict fixture is unexpected on $TARGET_ID." >&2
+      exit 2
+      ;;
+  esac
+  assert_removed "$suffix-cleanup"
+
+  if [ "$(cat "$legacy_root/sentinel")" != "legacy-root-sentinel" ] ||
+     ! grep -Fq 'legacy-launcher-sentinel' "$legacy_launcher"; then
+    echo "Legacy sentinel content changed during package removal ($TARGET_ID)." >&2
+    exit 1
+  fi
+  rm -f "$legacy_root/sentinel" "$legacy_launcher"
+  rmdir "$legacy_root"
+  {
+    echo "result=passed"
+    echo "guard=warning-only"
+    echo "install_command_exit_status=$status"
+    echo "package_removed_after_probe=true"
     echo "legacy_root_sentinel=preserved"
     echo "legacy_launcher_sentinel=preserved"
   } > "$audit/$suffix.result"
@@ -479,7 +547,7 @@ case "$TARGET_ID" in
     package="$audit/cage-xtmapper-$package_version-1-$machine.pkg.tar.zst"
     run_logged arch-package-previous bash tools/package/build-arch.sh "$previous_version" "$previous_package"
     run_logged arch-package-current bash tools/package/build-arch.sh "$package_version" "$package"
-    expect_legacy_conflict_refused arch-legacy-conflict pacman -U --noconfirm "$previous_package"
+    expect_legacy_conflict_warning arch-legacy-warning pacman -U --noconfirm "$previous_package"
     run_logged arch-install-previous pacman -U --noconfirm "$previous_package"
     assert_installed_version "$previous_version" arch-install-previous
     test -x /usr/bin/cage-xtmapper
@@ -508,7 +576,7 @@ case "$TARGET_ID" in
     package="$audit/cage-xtmapper-$package_version-r0.apk"
     run_logged apk-package-previous bash tools/package/build-apk.sh "$previous_version" "$previous_package"
     run_logged apk-package-current bash tools/package/build-apk.sh "$package_version" "$package"
-    expect_legacy_conflict_refused apk-legacy-conflict apk add --allow-untrusted "$previous_package"
+    expect_legacy_conflict_warning apk-legacy-warning apk add --allow-untrusted "$previous_package"
     run_logged apk-install-previous apk add --allow-untrusted "$previous_package"
     assert_installed_version "$previous_version" apk-install-previous
     test -x /usr/bin/cage-xtmapper

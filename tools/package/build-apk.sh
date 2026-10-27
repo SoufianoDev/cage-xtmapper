@@ -67,9 +67,8 @@ cat > "$preinstall" <<'PREINSTALL'
 #!/bin/sh
 set -eu
 if [ -e /opt/cage-xtmapper ] || [ -L /opt/cage-xtmapper ] || [ -e /usr/local/bin/cage-xtmapper ] || [ -L /usr/local/bin/cage-xtmapper ]; then
-  echo "Refusing to install cage-xtmapper APK: a bootstrap-managed or local installation may shadow /usr/bin/cage-xtmapper." >&2
-  echo "Remove the previous managed installation deliberately, then retry." >&2
-  exit 1
+  echo "WARNING: a bootstrap-managed or local installation may shadow /usr/bin/cage-xtmapper." >&2
+  echo "Inspect and remove the previous installation deliberately before relying on the package-managed executable." >&2
 fi
 PREINSTALL
 chmod 0644 "$preinstall"
