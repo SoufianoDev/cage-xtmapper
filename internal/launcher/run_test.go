@@ -2,6 +2,8 @@ package launcher
 
 import (
 	"context"
+	"os"
+	"os/exec"
 	"testing"
 	"time"
 )
@@ -67,6 +69,46 @@ func TestWaitForChildExitIsBounded(t *testing.T) {
 			t.Fatalf("bounded child wait took %s; want it to return near its 20ms limit", elapsed)
 		}
 	})
+}
+
+func TestTerminatePeerAfterRuntimeExitUsesBoundedCollection(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		initiatingCode int
+		wantCode       int
+	}{
+		{name: "preserve initiating failure", initiatingCode: 9, wantCode: 9},
+		{name: "incomplete collection cannot report success", initiatingCode: 0, wantCode: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dead := make(chan struct{})
+			peer := &child{cmd: &exec.Cmd{Process: &os.Process{Pid: 123}}, dead: dead}
+			cancelled := false
+			waitCalled := false
+			got := terminatePeerAfterRuntimeExitWithWait(
+				func() { cancelled = true }, peer, tc.initiatingCode, "test peer",
+				func(gotDead <-chan struct{}, timeout time.Duration) bool {
+					waitCalled = true
+					if gotDead != dead {
+						t.Fatal("cleanup waited on the wrong child channel")
+					}
+					if timeout != runtimePeerCleanupCollectionWindow {
+						t.Fatalf("collection timeout = %s, want %s", timeout, runtimePeerCleanupCollectionWindow)
+					}
+					return false
+				},
+			)
+			if !cancelled {
+				t.Fatal("cleanup did not cancel the peer context")
+			}
+			if !waitCalled {
+				t.Fatal("cleanup did not perform bounded exit collection")
+			}
+			if got != tc.wantCode {
+				t.Fatalf("cleanup result = %d, want %d", got, tc.wantCode)
+			}
+		})
+	}
 }
 
 func TestPrepareStartupRunsWaydroidLifecycleInOrder(t *testing.T) {

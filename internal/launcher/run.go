@@ -289,6 +289,11 @@ func supervise(ctx context.Context, cfg Config, t transport, startupSeconds int6
 		if ctx.Err() != nil {
 			return 1
 		}
+		if remote.exited() {
+			code := pipelineExitStatus(comp, remote)
+			markPipelineExitCause(parentCtx, code)
+			return code
+		}
 		code := terminatePeerAfterRuntimeExit(cancel, remote, comp.code, "remote XtMapper")
 		markPipelineExitCause(parentCtx, code)
 		return code
@@ -301,6 +306,11 @@ func supervise(ctx context.Context, cfg Config, t transport, startupSeconds int6
 		}
 		if ctx.Err() != nil {
 			return 1
+		}
+		if comp.exited() {
+			code := pipelineExitStatus(comp, remote)
+			markPipelineExitCause(parentCtx, code)
+			return code
 		}
 		code := terminatePeerAfterRuntimeExit(cancel, comp, remote.code, "compositor")
 		markPipelineExitCause(parentCtx, code)
@@ -340,9 +350,19 @@ func waitForChildExit(dead <-chan struct{}, timeout time.Duration) bool {
 }
 
 func terminatePeerAfterRuntimeExit(cancel context.CancelFunc, peer *child, initiatingCode int, peerName string) int {
+	return terminatePeerAfterRuntimeExitWithWait(cancel, peer, initiatingCode, peerName, waitForChildExit)
+}
+
+func terminatePeerAfterRuntimeExitWithWait(
+	cancel context.CancelFunc,
+	peer *child,
+	initiatingCode int,
+	peerName string,
+	wait func(<-chan struct{}, time.Duration) bool,
+) int {
 	cancel()
-	if !waitForChildExit(peer.dead, runtimePeerCleanupCollectionWindow) {
-		fmt.Fprintf(os.Stderr, "Error: timed out waiting for %s process %d after cleanup; exit status collection is incomplete\n", peerName, peer.cmd.Process.Pid)
+	if !wait(peer.dead, runtimePeerCleanupCollectionWindow) {
+		fmt.Fprintf(os.Stderr, "Error: timed out waiting for %s process %d after cleanup; exit status collection is incomplete\\n", peerName, peer.cmd.Process.Pid)
 	}
 	// Forced cleanup after the natural-exit grace is not a successful pipeline
 	// completion, even if the initiating child itself exited with status zero.
