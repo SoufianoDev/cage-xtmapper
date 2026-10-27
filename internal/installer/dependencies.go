@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -62,11 +63,19 @@ func installedSharedLibraries() (map[string]bool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot inspect installed shared libraries with ldconfig: %w", err)
 	}
+	return parseInstalledSharedLibraries(string(output), runtime.GOARCH)
+}
+
+// parseInstalledSharedLibraries ignores libraries that ldconfig reports for a
+// different architecture. A matching soname from an incompatible multiarch
+// directory must not satisfy the runtime check.
+func parseInstalledSharedLibraries(output, hostArch string) (map[string]bool, error) {
 	installed := make(map[string]bool)
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	scanner := bufio.NewScanner(strings.NewReader(output))
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
-		if len(fields) > 0 && strings.Contains(fields[0], ".so") {
+		if len(fields) > 1 && strings.Contains(fields[0], ".so") &&
+			ldconfigEntryMatchesArch(fields[1], hostArch) {
 			installed[fields[0]] = true
 		}
 	}
@@ -74,6 +83,19 @@ func installedSharedLibraries() (map[string]bool, error) {
 		return nil, err
 	}
 	return installed, nil
+}
+
+func ldconfigEntryMatchesArch(value, hostArch string) bool {
+	value = strings.ToLower(value)
+	switch hostArch {
+	case "amd64":
+		// Accept x86-64 ISA variants reported by newer glibc versions too.
+		return strings.Contains(value, "x86-64")
+	case "arm64":
+		return strings.Contains(value, "aarch64") || strings.Contains(value, "arm64")
+	default:
+		return false
+	}
 }
 
 func glibcVersion() (string, error) {

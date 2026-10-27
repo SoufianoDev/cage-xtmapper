@@ -334,7 +334,7 @@ func TestLegacyMigrationNeverOverwritesExistingBackup(t *testing.T) {
 	if !bytes.Equal(readFile(t, scriptPath+".legacy-backup-"+tx.ID), legacy) {
 		t.Fatal("resumed migration did not preserve the original legacy file")
 	}
-	h.onlyRelease(t, h.id1)
+	h.onlyRelease(h.id1)
 }
 
 func TestLegacyMigrationResumesAfterCrash(t *testing.T) {
