@@ -362,7 +362,7 @@ func terminatePeerAfterRuntimeExitWithWait(
 ) int {
 	cancel()
 	if !wait(peer.dead, runtimePeerCleanupCollectionWindow) {
-		fmt.Fprintf(os.Stderr, "Error: timed out waiting for %s process %d after cleanup; exit status collection is incomplete\\n", peerName, peer.cmd.Process.Pid)
+		fmt.Fprintf(os.Stderr, "Error: timed out waiting for %s process %d after cleanup; exit status collection is incomplete\n", peerName, peer.cmd.Process.Pid)
 	}
 	// Forced cleanup after the natural-exit grace is not a successful pipeline
 	// completion, even if the initiating child itself exited with status zero.
