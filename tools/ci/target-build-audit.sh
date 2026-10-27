@@ -27,7 +27,7 @@ record_environment() {
     uname -a
     cat /etc/os-release
     if [ -r /etc/debian_version ]; then
-      printf "debian_version="
+      printf "debian_version_file="
       tr -d '\n' < /etc/debian_version
       printf '\n'
     fi
