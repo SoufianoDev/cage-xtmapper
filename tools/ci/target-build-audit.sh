@@ -19,6 +19,7 @@ record_environment() {
     echo "target_id=$TARGET_ID"
     echo "target_image=$TARGET_IMAGE"
     echo "target_image_digest=${TARGET_IMAGE_DIGEST:-unknown}"
+    echo "target_repo_snapshot=${TARGET_REPO_SNAPSHOT:-not-pinned}"
     echo "target_arch=$TARGET_ARCH"
     echo "source_commit=$(git rev-parse HEAD 2>/dev/null || echo unknown)"
     echo "workflow_sha=$GITHUB_SHA"
@@ -58,7 +59,10 @@ case "$TARGET_ID" in
       systemd-devel hwdata scdoc wayland-protocols-devel rpm-build jq zstd
     ;;
   archlinux)
-    pacman -Syu --noconfirm --needed \
+    cat > /etc/pacman.d/mirrorlist <<'ARCH_SNAPSHOT'
+Server = https://archive.archlinux.org/repos/2026/10/27/$repo/os/$arch
+ARCH_SNAPSHOT
+    pacman -Syyu --noconfirm --needed \
       bash ca-certificates curl xz file binutils base-devel clang git bison \
       meson ninja pkgconf go libffi expat libxml2 wayland wayland-protocols \
       libxkbcommon pixman libinput libdrm mesa seatd systemd-libs scdoc hwdata jq zstd
@@ -86,6 +90,22 @@ git -C "$root" rev-parse --is-inside-work-tree >/dev/null
 # where the distro package's bundled toolchain is older. Keep the observed
 # toolchain in the audit report and fail clearly if Go cannot build the module.
 record_environment
+
+case "$TARGET_ID" in
+  debian-13|ubuntu-24.04|ubuntu-26.04)
+    dpkg-query -W -f='${binary:Package}\t${Version}\t${Architecture}\n' | sort > "$audit/installed-packages.tsv"
+    ;;
+  fedora-44)
+    rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n' | sort > "$audit/installed-packages.tsv"
+    ;;
+  archlinux)
+    pacman -Q | sort > "$audit/installed-packages.tsv"
+    ;;
+  alpine-3.24)
+    apk info -vv | sort > "$audit/installed-packages.tsv"
+    ;;
+esac
+
 go env GOVERSION > "$audit/go-toolchain.txt"
 
 if ! ./build.sh > "$audit/build.log" 2>&1; then

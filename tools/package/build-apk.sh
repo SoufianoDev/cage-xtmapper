@@ -128,6 +128,8 @@ home=$(getent passwd cagepackager | cut -d: -f6)
 mkdir -p "$home/.abuild"
 openssl genrsa -out "$home/.abuild/cage-xtmapper-ci.rsa" 2048 >/dev/null 2>&1
 openssl rsa -in "$home/.abuild/cage-xtmapper-ci.rsa" -pubout -out "$home/.abuild/cage-xtmapper-ci.rsa.pub" >/dev/null 2>&1
+# Trust this ephemeral CI-only signing key while abuild generates its local index.
+install -Dm644 "$home/.abuild/cage-xtmapper-ci.rsa.pub" /etc/apk/keys/cage-xtmapper-ci.rsa.pub
 chown -R cagepackager:abuild "$home" "$work"
 chmod 0600 "$home/.abuild/cage-xtmapper-ci.rsa"
 export PACKAGER="Cage XtMapper CI <ci@example.invalid>"
