@@ -10,6 +10,17 @@ set -eu
 root=$(pwd -P)
 audit="$root/build/target-audit/$TARGET_ID"
 mkdir -p "$audit"
+
+# CI artifacts are public build evidence. Never put the APK private signing
+# key inside the directory uploaded as an artifact.
+if [ "$TARGET_ID" = "alpine-3.24" ]; then
+  case "${APK_CI_KEY_DIR:-}" in
+    "$audit"|"$audit"/*)
+      echo "Refusing to place the APK signing key inside the uploaded audit directory." >&2
+      exit 2
+      ;;
+  esac
+fi
 # Container root creates some build outputs with mode 0600. Always make the
 # evidence readable by actions/upload-artifact, including on failure.
 trap 'chmod -R a+rX "$audit" 2>/dev/null || true' EXIT
@@ -183,9 +194,17 @@ zstd -t "$portable" > "$audit/portable-zstd-test.txt"
 
 run_logged() {
   log_name="$1"; shift
-  if ! "$@" > "$audit/$log_name.log" 2>&1; then
-    cat "$audit/$log_name.log" >&2
-    exit 1
+  log_file="$audit/$log_name.log"
+  status_file="$audit/$log_name.status"
+  if "$@" > "$log_file" 2>&1; then
+    status=0
+  else
+    status=$?
+  fi
+  printf 'exit_status=%s\n' "$status" > "$status_file"
+  if [ "$status" -ne 0 ]; then
+    cat "$log_file" >&2
+    exit "$status"
   fi
 }
 
