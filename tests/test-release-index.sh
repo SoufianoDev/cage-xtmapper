@@ -43,6 +43,8 @@ grep -Fq "Release asset index — $release_tag" "$index"
 grep -Fq "Source commit: $GITHUB_SHA" "$index"
 grep -Fq "Native package version: $package_version" "$index"
 grep -Fq "disposable CI signing key" "$index"
+grep -Fq "legacy-path scriptlet only warns" "$index"
+grep -Fq "RPM %pre guard blocks legacy paths" "$index"
 rows="$(grep -Fc '| [' "$index")"
 if [[ "$rows" -ne "${#assets[@]}" ]]; then
   echo "Release index contains $rows asset rows, expected ${#assets[@]}." >&2

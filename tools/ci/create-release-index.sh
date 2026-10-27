@@ -101,13 +101,13 @@ index_asset() {
   done
 
   for file in "${rpm_assets[@]}"; do
-    index_asset "$file" "Fedora 44" "x86_64" ".rpm" "Experimental" "RPM dependency and lifecycle checks pass in a container; Bazzite host testing is separate and has not been done."
+    index_asset "$file" "Fedora 44" "x86_64" ".rpm" "Experimental" "RPM dependency/lifecycle and rpmlint pass in a container; the RPM %pre guard blocks legacy paths; Bazzite host testing is separate and has not been done."
   done
   for file in "${arch_assets[@]}"; do
-    index_asset "$file" "Arch Linux; repositories pinned to snapshot 2026-10-26" "x86_64" ".pkg.tar.zst" "Experimental" "Package-manager lifecycle passed in the recorded snapshot; rolling-release runtime compatibility remains unproven."
+    index_asset "$file" "Arch Linux; repositories pinned to snapshot 2026-10-26" "x86_64" ".pkg.tar.zst" "Experimental" "Package-manager lifecycle passed; legacy-path scriptlet only warns, so inspect/remove the old /opt and /usr/local/bin install before relying on /usr/bin; rolling-release runtime compatibility remains unproven."
   done
   for file in "${apk_assets[@]}"; do
-    index_asset "$file" "Alpine Linux 3.24.3" "x86_64" ".apk" "Experimental" "Musl-native candidate; production signature/trust is not configured and no real Wayland session test has passed."
+    index_asset "$file" "Alpine Linux 3.24.3" "x86_64" ".apk" "Experimental" "Musl-native candidate; legacy-path scriptlet only warns, so inspect/remove the old /opt and /usr/local/bin install before relying on /usr/bin; production signature/trust is not configured and no real Wayland session test has passed."
   done
 
   for file in "${amd64_helper[0]}" "${arm64_helper[0]}"; do
