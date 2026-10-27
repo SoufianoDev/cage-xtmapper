@@ -78,10 +78,12 @@ jobs:
           set -euo pipefail
           output="build/target-audit/$TARGET"
           docker pull "$IMAGE"
+          image_digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE")"
           common_args=(
             run --rm --platform linux/amd64
             -e TARGET_ID="$TARGET"
             -e TARGET_IMAGE="$IMAGE"
+            -e TARGET_IMAGE_DIGEST="$image_digest"
             -e TARGET_ARCH=amd64
             -e GITHUB_RUN_ID="$GITHUB_RUN_ID"
             -e GITHUB_SHA="$GITHUB_SHA"
