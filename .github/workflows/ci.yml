@@ -67,8 +67,8 @@ jobs:
 
       - name: Check shell syntax and style
         run: |
-          for script in build.sh install.sh install_deps.sh cage_xtmapper.sh tests/*.sh tools/ci/*.sh; do bash -n "$script"; done
-          shellcheck build.sh install.sh install_deps.sh cage_xtmapper.sh tests/*.sh tools/ci/*.sh
+          for script in build.sh install.sh install_deps.sh cage_xtmapper.sh tests/*.sh tools/ci/*.sh tools/package/*.sh; do bash -n "$script"; done
+          shellcheck build.sh install.sh install_deps.sh cage_xtmapper.sh tests/*.sh tools/ci/*.sh tools/package/*.sh
 
       - name: Run shell fixture checks
         run: |
