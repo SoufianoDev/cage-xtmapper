@@ -90,7 +90,8 @@ arch='@ARCH@'
 license='@LICENSES@'
 install="$pkgname.pre-install"
 source="$pkgname-$pkgver.tar.gz $pkgname.pre-install"
-sha256sums='@SOURCE_SHA@ @INSTALL_SHA@'
+sha256sums='@SOURCE_SHA@  cage-xtmapper-@PKGVER@.tar.gz
+@INSTALL_SHA@  cage-xtmapper.pre-install'
 options='!check'
 
 build() {
