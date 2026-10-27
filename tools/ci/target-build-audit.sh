@@ -363,7 +363,11 @@ case "$TARGET_ID" in
     package="$audit/cage-xtmapper-$package_version-1.rpm"
     run_logged rpm-package-previous bash tools/package/build-rpm.sh "$previous_version" "$previous_package"
     run_logged rpm-package-current bash tools/package/build-rpm.sh "$package_version" "$package"
-    run_logged rpm-lint rpmlint "$package"
+    rpm_lint_name="$(rpm -qp --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}.rpm' "$package")"
+    rpm_lint_path="$audit/$rpm_lint_name"
+    ln -s "$(basename "$package")" "$rpm_lint_path"
+    run_logged rpm-lint rpmlint "$rpm_lint_path"
+    rm -f "$rpm_lint_path"
     run_logged rpm-install-previous dnf install -y "$previous_package"
     assert_installed_version "$previous_version" rpm-install-previous
     test -x /usr/bin/cage-xtmapper
