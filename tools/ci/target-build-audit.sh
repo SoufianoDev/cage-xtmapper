@@ -13,10 +13,17 @@ mkdir -p "$audit"
 
 # CI artifacts are public build evidence. Never put the APK private signing
 # key inside the directory uploaded as an artifact.
-if [ "$TARGET_ID" = "alpine-3.24" ]; then
-  case "${APK_CI_KEY_DIR:-}" in
-    "$audit"|"$audit"/*)
-      echo "Refusing to place the APK signing key inside the uploaded audit directory." >&2
+if [ "$TARGET_ID" = "alpine-3.24" ] && [ -n "${APK_CI_KEY_DIR:-}" ]; then
+  case "$APK_CI_KEY_DIR" in
+    /*) ;;
+    *)
+      echo "APK_CI_KEY_DIR must be an absolute path outside the uploaded audit directory." >&2
+      exit 2
+      ;;
+  esac
+  case "$APK_CI_KEY_DIR" in
+    "$audit"|"$audit"/*|*"/../"*|*"/./"*)
+      echo "Refusing to place the APK signing key inside or ambiguously near the uploaded audit directory." >&2
       exit 2
       ;;
   esac
