@@ -175,13 +175,30 @@ func runWithTimeout(ctx context.Context, cmd *exec.Cmd, timeout time.Duration, p
 	defer c.finish()
 	select {
 	case <-c.dead:
-		return c.code, nil
+		return commandExitResult(ctx, c.code)
 	case <-ctx.Done():
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return -1, ErrTimedOut
 		}
 		return -1, ctx.Err()
 	}
+}
+
+// commandExitResult preserves the command timeout when process exit and
+// deadline expiry become observable at nearly the same time.
+func commandExitResult(ctx context.Context, code int) (int, error) {
+	ctxErr := ctx.Err()
+	if errors.Is(ctxErr, context.DeadlineExceeded) {
+		return -1, ErrTimedOut
+	}
+	// The deadline can already have elapsed before the context timer goroutine
+	// publishes DeadlineExceeded. Do not treat that narrow race as success.
+	if ctxErr == nil {
+		if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+			return -1, ErrTimedOut
+		}
+	}
+	return code, nil
 }
 
 func runInherit(ctx context.Context, cmd *exec.Cmd, timeout time.Duration) (int, error) {

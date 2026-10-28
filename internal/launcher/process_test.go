@@ -14,6 +14,56 @@ import (
 	"time"
 )
 
+type deadlineOnlyContext struct {
+	context.Context
+	deadline time.Time
+}
+
+func (c deadlineOnlyContext) Deadline() (time.Time, bool) {
+	return c.deadline, true
+}
+
+func TestCommandExitResultHonorsDeadline(t *testing.T) {
+	expiredCtx, cancelExpired := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancelExpired()
+
+	activeCtx, cancelActive := context.WithTimeout(context.Background(), time.Minute)
+	defer cancelActive()
+
+	cases := []struct {
+		name        string
+		ctx         context.Context
+		code        int
+		wantCode    int
+		wantTimeout bool
+	}{
+		{name: "deadline already reported", ctx: expiredCtx, code: 0, wantCode: -1, wantTimeout: true},
+		{
+			name:        "deadline elapsed before context timer publication",
+			ctx:         deadlineOnlyContext{Context: context.Background(), deadline: time.Now().Add(-time.Second)},
+			code:        0,
+			wantCode:    -1,
+			wantTimeout: true,
+		},
+		{name: "exit before deadline preserves status", ctx: activeCtx, code: 9, wantCode: 9},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotCode, err := commandExitResult(tc.ctx, tc.code)
+			if gotCode != tc.wantCode {
+				t.Fatalf("result code = %d, want %d (err %v)", gotCode, tc.wantCode, err)
+			}
+			if tc.wantTimeout {
+				if !errors.Is(err, ErrTimedOut) {
+					t.Fatalf("result error = %v, want %v", err, ErrTimedOut)
+				}
+			} else if err != nil {
+				t.Fatalf("result error = %v, want nil", err)
+			}
+		})
+	}
+}
+
 func TestRunBoundedTimeoutKillsProcessGroupDescendants(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "descendant.pid")
 	cmd := exec.Command("sh", "-c", fmt.Sprintf("sleep 30 & echo $! > %q; wait", pidFile))
