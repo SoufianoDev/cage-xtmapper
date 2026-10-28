@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"testing"
@@ -85,19 +86,53 @@ func TestTerminatePeerAfterRuntimeExitUsesBoundedCollection(t *testing.T) {
 			peer := &child{cmd: &exec.Cmd{Process: &os.Process{Pid: 123}}, dead: dead}
 			cancelled := false
 			waitCalled := false
-			got := terminatePeerAfterRuntimeExitWithWait(
-				func() { cancelled = true }, peer, tc.initiatingCode, "test peer",
-				func(gotDead <-chan struct{}, timeout time.Duration) bool {
-					waitCalled = true
-					if gotDead != dead {
-						t.Fatal("cleanup waited on the wrong child channel")
-					}
-					if timeout != runtimePeerCleanupCollectionWindow {
-						t.Fatalf("collection timeout = %s, want %s", timeout, runtimePeerCleanupCollectionWindow)
-					}
-					return false
-				},
-			)
+			wait := func(gotDead <-chan struct{}, timeout time.Duration) bool {
+				waitCalled = true
+				if gotDead != dead {
+					t.Fatal("cleanup waited on the wrong child channel")
+				}
+				if timeout != runtimePeerCleanupCollectionWindow {
+					t.Fatalf("collection timeout = %s, want %s", timeout, runtimePeerCleanupCollectionWindow)
+				}
+				return false
+			}
+			cleanup := func() int {
+				return terminatePeerAfterRuntimeExitWithWait(
+					func() { cancelled = true }, peer, tc.initiatingCode, "test peer", wait,
+				)
+			}
+			var got int
+			if tc.initiatingCode != 0 {
+				// os.Stderr is process-global: keep this test non-parallel and
+				// restore it even if an assertion inside cleanup terminates the test.
+				stderrFile, err := os.CreateTemp(t.TempDir(), "stderr-")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer stderrFile.Close()
+				oldStderr := os.Stderr
+				os.Stderr = stderrFile
+				got = func() int {
+					defer func() { os.Stderr = oldStderr }()
+					return cleanup()
+				}()
+				if err := stderrFile.Sync(); err != nil {
+					t.Fatalf("sync captured stderr: %v", err)
+				}
+				if _, err := stderrFile.Seek(0, io.SeekStart); err != nil {
+					t.Fatalf("rewind captured stderr: %v", err)
+				}
+				captured, err := io.ReadAll(stderrFile)
+				if err != nil {
+					t.Fatalf("read captured stderr: %v", err)
+				}
+				const wantStderr = "Error: timed out waiting for test peer process 123 after cleanup; exit status collection is incomplete\n"
+				if string(captured) != wantStderr {
+					t.Fatalf("stderr = %q, want exact warning %q", string(captured), wantStderr)
+				}
+			} else {
+				got = cleanup()
+			}
 			if !cancelled {
 				t.Fatal("cleanup did not cancel the peer context")
 			}
