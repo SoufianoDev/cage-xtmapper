@@ -30,21 +30,25 @@ func TestCommandExitResultHonorsDeadline(t *testing.T) {
 	activeCtx, cancelActive := context.WithTimeout(context.Background(), time.Minute)
 	defer cancelActive()
 
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
 	cases := []struct {
-		name        string
-		ctx         context.Context
-		code        int
-		wantCode    int
-		wantTimeout bool
+		name     string
+		ctx      context.Context
+		code     int
+		wantCode int
+		wantErr  error
 	}{
-		{name: "deadline already reported", ctx: expiredCtx, code: 0, wantCode: -1, wantTimeout: true},
+		{name: "deadline already reported", ctx: expiredCtx, code: 0, wantCode: -1, wantErr: ErrTimedOut},
 		{
-			name:        "deadline elapsed before context timer publication",
-			ctx:         deadlineOnlyContext{Context: context.Background(), deadline: time.Now().Add(-time.Second)},
-			code:        0,
-			wantCode:    -1,
-			wantTimeout: true,
+			name:     "deadline elapsed before context timer publication",
+			ctx:      deadlineOnlyContext{Context: context.Background(), deadline: time.Now().Add(-time.Second)},
+			code:     0,
+			wantCode: -1,
+			wantErr:  ErrTimedOut,
 		},
+		{name: "context canceled", ctx: canceledCtx, code: 0, wantCode: -1, wantErr: context.Canceled},
 		{name: "exit before deadline preserves status", ctx: activeCtx, code: 9, wantCode: 9},
 	}
 	for _, tc := range cases {
@@ -53,12 +57,8 @@ func TestCommandExitResultHonorsDeadline(t *testing.T) {
 			if gotCode != tc.wantCode {
 				t.Fatalf("result code = %d, want %d (err %v)", gotCode, tc.wantCode, err)
 			}
-			if tc.wantTimeout {
-				if !errors.Is(err, ErrTimedOut) {
-					t.Fatalf("result error = %v, want %v", err, ErrTimedOut)
-				}
-			} else if err != nil {
-				t.Fatalf("result error = %v, want nil", err)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("result error = %v, want %v", err, tc.wantErr)
 			}
 		})
 	}

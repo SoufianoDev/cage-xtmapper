@@ -184,8 +184,8 @@ func runWithTimeout(ctx context.Context, cmd *exec.Cmd, timeout time.Duration, p
 	}
 }
 
-// commandExitResult preserves the command timeout when process exit and
-// deadline expiry become observable at nearly the same time.
+// commandExitResult preserves cancellation and timeouts when process exit and
+// context completion become observable at nearly the same time.
 func commandExitResult(ctx context.Context, code int) (int, error) {
 	ctxErr := ctx.Err()
 	if errors.Is(ctxErr, context.DeadlineExceeded) {
@@ -197,6 +197,9 @@ func commandExitResult(ctx context.Context, code int) (int, error) {
 		if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
 			return -1, ErrTimedOut
 		}
+	}
+	if ctxErr != nil {
+		return -1, ctxErr
 	}
 	return code, nil
 }
