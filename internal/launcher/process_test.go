@@ -79,6 +79,16 @@ func TestRunWithTimeoutHonorsExpiredParentDeadlineOnChildExit(t *testing.T) {
 	}
 }
 
+func TestRunWithTimeoutPreservesNonzeroChildExit(t *testing.T) {
+	code, err := runWithTimeout(context.Background(), exec.Command("sh", "-c", "exit 9"), time.Second, true)
+	if err != nil {
+		t.Fatalf("runWithTimeout error = %v, want nil for an ordinary nonzero child exit", err)
+	}
+	if code != 9 {
+		t.Fatalf("runWithTimeout exit code = %d, want 9", code)
+	}
+}
+
 func TestRunBoundedTimeoutKillsProcessGroupDescendants(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "descendant.pid")
 	cmd := exec.Command("sh", "-c", fmt.Sprintf("sleep 30 & echo $! > %q; wait", pidFile))
