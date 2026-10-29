@@ -64,6 +64,23 @@ func TestCommandExitResultHonorsDeadline(t *testing.T) {
 	}
 }
 
+
+func TestWaitForCommandResultHonorsExpiredDeadlineOnChildCompletion(t *testing.T) {
+	// The nil Done channel forces the already-completed child branch while
+	// Deadline reports an elapsed deadline not yet published by a timer.
+	ctx := deadlineOnlyContext{
+		Context:  context.Background(),
+		deadline: time.Now().Add(-time.Second),
+	}
+	dead := make(chan struct{})
+	close(dead)
+
+	code, err := waitForCommandResult(ctx, dead, func() int { return 9 })
+	if code != -1 || !errors.Is(err, ErrTimedOut) {
+		t.Fatalf("completed child result = (%d, %v), want (-1, %v)", code, err, ErrTimedOut)
+	}
+}
+
 func TestRunBoundedTimeoutKillsProcessGroupDescendants(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "descendant.pid")
 	cmd := exec.Command("sh", "-c", fmt.Sprintf("sleep 30 & echo $! > %q; wait", pidFile))

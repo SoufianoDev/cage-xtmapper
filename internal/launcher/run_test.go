@@ -2,9 +2,13 @@ package launcher
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -144,6 +148,82 @@ func TestTerminatePeerAfterRuntimeExitUsesBoundedCollection(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestABIDiscoveryTimeoutTerminatesProbe(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "abi-probe.pid")
+	abiTimeout := 200 * time.Millisecond
+	remoteCalled := false
+	tr := transport{
+		probeCmd: func(verb string, args ...string) *exec.Cmd {
+			if verb == "getprop" && len(args) == 1 && args[0] == "sys.boot_completed" {
+				return exec.Command("sh", "-c", "printf '1\\n'")
+			}
+			if verb == "getprop" && len(args) == 1 && args[0] == "ro.product.cpu.abi" {
+				return exec.Command("sh", "-c", fmt.Sprintf("printf '%%s\\n' \"$\" > %q; exec sleep 30", pidFile))
+			}
+			return exec.Command("sh", "-c", "exit 1")
+		},
+		remoteShellCmd: func(string) *exec.Cmd {
+			remoteCalled = true
+			return exec.Command("sh", "-c", "exit 0")
+		},
+	}
+
+	_, err := setupWithProbeTimeouts(context.Background(), tr, true, nil, 1, abiTimeout, 200*time.Millisecond)
+	wantError := fmt.Sprintf("timed out after %s while determining the Android CPU ABI", abiTimeout)
+	if err == nil || err.Error() != wantError {
+		t.Fatalf("startup error = %v, want %q", err, wantError)
+	}
+	if remoteCalled {
+		t.Fatal("remote service launched after ABI discovery timed out")
+	}
+
+	pid := readTimedOutProbePID(t, pidFile)
+	assertTimedOutProbeStopped(t, pid)
+}
+
+func readTimedOutProbePID(t *testing.T, path string) int {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data)))
+			if parseErr != nil {
+				t.Fatalf("invalid ABI probe PID %q: %v", strings.TrimSpace(string(data)), parseErr)
+			}
+			return pid
+		}
+		if !os.IsNotExist(err) {
+			t.Fatalf("read ABI probe PID: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("ABI probe did not write its PID file %s", path)
+	return 0
+}
+
+func assertTimedOutProbeStopped(t *testing.T, pid int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+		if os.IsNotExist(err) {
+			return
+		}
+		if err == nil {
+			record := string(data)
+			if end := strings.LastIndex(record, ")"); end >= 0 {
+				fields := strings.Fields(record[end+1:])
+				if len(fields) > 0 && fields[0] == "Z" {
+					return
+				}
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("ABI probe process %d survived its command timeout", pid)
 }
 
 func TestPrepareStartupRunsWaydroidLifecycleInOrder(t *testing.T) {

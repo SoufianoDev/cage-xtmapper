@@ -416,6 +416,12 @@ func deadlineExpired(ctx context.Context, deadline time.Time) bool {
 }
 
 func setupWithDeadline(ctx context.Context, t transport, useADB bool, args []string, startupSeconds int64) (*exec.Cmd, error) {
+	return setupWithProbeTimeouts(ctx, t, useADB, args, startupSeconds, abiProbeTimeout, apkProbeTimeout)
+}
+
+// setupWithProbeTimeouts runs startup discovery with independently supplied
+// probe timeouts so timeout behavior can be tested without long waits.
+func setupWithProbeTimeouts(ctx context.Context, t transport, useADB bool, args []string, startupSeconds int64, abiTimeout, apkTimeout time.Duration) (*exec.Cmd, error) {
 	if startupSeconds <= 0 {
 		return nil, errors.New("XTMAPPER_BOOT_WAIT_SECONDS must be a positive integer")
 	}
@@ -452,13 +458,13 @@ func setupWithDeadline(ctx context.Context, t transport, useADB bool, args []str
 		}
 	}
 
-	abi, err := t.getprop(ctx, "ro.product.cpu.abi", abiProbeTimeout)
+	abi, err := t.getprop(ctx, "ro.product.cpu.abi", abiTimeout)
 	if err != nil || abi == "" {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
 		if errors.Is(err, ErrTimedOut) {
-			return nil, fmt.Errorf("timed out after %s while determining the Android CPU ABI", abiProbeTimeout)
+			return nil, fmt.Errorf("timed out after %s while determining the Android CPU ABI", abiTimeout)
 		}
 		return nil, errors.New("could not determine the Android CPU ABI")
 	}
@@ -466,7 +472,7 @@ func setupWithDeadline(ctx context.Context, t transport, useADB bool, args []str
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		apkPath, probeErr := t.packagePathProbeWithTimeout(ctx, pkg, apkProbeTimeout)
+		apkPath, probeErr := t.packagePathProbeWithTimeout(ctx, pkg, apkTimeout)
 		if probeErr != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()

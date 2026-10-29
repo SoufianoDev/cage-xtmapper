@@ -173,9 +173,14 @@ func runWithTimeout(ctx context.Context, cmd *exec.Cmd, timeout time.Duration, p
 		return -1, err
 	}
 	defer c.finish()
+	return waitForCommandResult(ctx, c.dead, func() int { return c.code })
+}
+
+// waitForCommandResult resolves child completion against the command context.
+func waitForCommandResult(ctx context.Context, done <-chan struct{}, exitCode func() int) (int, error) {
 	select {
-	case <-c.dead:
-		return commandExitResult(ctx, c.code)
+	case <-done:
+		return commandExitResult(ctx, exitCode())
 	case <-ctx.Done():
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return -1, ErrTimedOut
