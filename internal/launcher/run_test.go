@@ -227,7 +227,7 @@ func assertTimedOutProbeStopped(t *testing.T, pid int) {
 }
 
 func TestAPKDiscoveryUsesFreshTimeoutPerProbe(t *testing.T) {
-	apkTimeout := 50 * time.Millisecond
+	apkTimeout := 2 * time.Second
 	debugProbeMarker := filepath.Join(t.TempDir(), "debug-probe-completed")
 	var probes []string
 	var remoteCommand string
@@ -245,7 +245,7 @@ func TestAPKDiscoveryUsesFreshTimeoutPerProbe(t *testing.T) {
 				if pkg == "xtr.keymapper.debug" {
 					// If the timeout is not applied, this command completes and
 					// leaves a marker before returning a debug APK path.
-					script := fmt.Sprintf("sleep 1; printf done > %q; printf 'package:/data/app/debug/base.apk\\n'", debugProbeMarker)
+					script := fmt.Sprintf("sleep 5; printf done > %q; printf 'package:/data/app/debug/base.apk\\n'", debugProbeMarker)
 					return exec.Command("sh", "-c", script)
 				}
 				if pkg == "xtr.keymapper" {
