@@ -263,7 +263,7 @@ func TestAPKDiscoveryUsesFreshTimeoutPerProbe(t *testing.T) {
 	if _, err := setupWithProbeTimeouts(context.Background(), tr, true, nil, 1, time.Second, apkTimeout); err != nil {
 		t.Fatalf("APK discovery failed after the debug probe timed out: %v", err)
 	}
-	if got, want := strings.Join(probes, "\\n"), "xtr.keymapper.debug\\nxtr.keymapper"; got != want {
+	if got, want := strings.Join(probes, "\n"), "xtr.keymapper.debug\nxtr.keymapper"; got != want {
 		t.Fatalf("APK probe order = %q, want %q", got, want)
 	}
 	if _, err := os.Stat(debugProbeMarker); !os.IsNotExist(err) {
