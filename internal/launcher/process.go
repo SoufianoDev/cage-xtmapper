@@ -162,6 +162,7 @@ func runBoundedForeground(ctx context.Context, cmd *exec.Cmd, timeout time.Durat
 	return runWithTimeout(ctx, cmd, timeout, false)
 }
 
+// runWithTimeout runs a command under a deadline and returns its exit status or cancellation error.
 func runWithTimeout(ctx context.Context, cmd *exec.Cmd, timeout time.Duration, processGroup bool) (int, error) {
 	if timeout <= 0 {
 		return -1, ErrTimedOut
@@ -173,15 +174,40 @@ func runWithTimeout(ctx context.Context, cmd *exec.Cmd, timeout time.Duration, p
 		return -1, err
 	}
 	defer c.finish()
+	return waitForCommandResult(ctx, c.dead, func() int { return c.code })
+}
+
+// waitForCommandResult resolves child completion against the command context.
+func waitForCommandResult(ctx context.Context, done <-chan struct{}, exitCode func() int) (int, error) {
 	select {
-	case <-c.dead:
-		return c.code, nil
+	case <-done:
+		return commandExitResult(ctx, exitCode())
 	case <-ctx.Done():
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return -1, ErrTimedOut
 		}
 		return -1, ctx.Err()
 	}
+}
+
+// commandExitResult preserves cancellation and timeouts when process exit and
+// context completion become observable at nearly the same time.
+func commandExitResult(ctx context.Context, code int) (int, error) {
+	ctxErr := ctx.Err()
+	if errors.Is(ctxErr, context.DeadlineExceeded) {
+		return -1, ErrTimedOut
+	}
+	// The deadline can already have elapsed before the context timer goroutine
+	// publishes DeadlineExceeded. Do not treat that narrow race as success.
+	if ctxErr == nil {
+		if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+			return -1, ErrTimedOut
+		}
+	}
+	if ctxErr != nil {
+		return -1, ctxErr
+	}
+	return code, nil
 }
 
 func runInherit(ctx context.Context, cmd *exec.Cmd, timeout time.Duration) (int, error) {

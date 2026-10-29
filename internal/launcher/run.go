@@ -112,6 +112,7 @@ func Run(cfg Config) int {
 	}
 }
 
+// run prepares the selected transport and delegates child lifecycle management to supervise.
 func run(ctx context.Context, cfg Config) int {
 	ApplyEnvironment(&cfg)
 	if cfg.Tools.SelfExe == "" {
@@ -156,8 +157,7 @@ func run(ctx context.Context, cfg Config) int {
 		t = waydroidTransport(&cfg)
 	}
 
-	startupDeadline, err := prepareStartup(ctx, t, bootWait)
-	if err != nil {
+	if err := prepareStartup(ctx, t); err != nil {
 		code := 1
 		if errors.Is(err, ErrForegroundInterrupted) {
 			code = 130
@@ -166,23 +166,23 @@ func run(ctx context.Context, cfg Config) int {
 		reportError(err)
 		return code
 	}
-	return supervise(ctx, cfg, t, startupDeadline, bootWait)
+	return supervise(ctx, cfg, t, bootWait)
 }
 
-// prepareStartup gives each container operation its own transport-level timeout.
-// The Android boot wait starts only after the Waydroid container is running.
-func prepareStartup(ctx context.Context, t transport, bootWait int64) (time.Time, error) {
+// prepareStartup completes the Waydroid lifecycle before boot polling begins.
+// The boot-wait budget starts when setup begins polling Android's boot state.
+func prepareStartup(ctx context.Context, t transport) error {
 	if t.stopSession != nil {
 		if err := t.stopSession(ctx); err != nil {
-			return time.Time{}, err
+			return err
 		}
 	}
 	if t.startContainer != nil {
 		if err := t.startContainer(ctx); err != nil {
-			return time.Time{}, err
+			return err
 		}
 	}
-	return time.Now().Add(time.Duration(bootWait) * time.Second), nil
+	return nil
 }
 
 func reportError(err error) {
@@ -191,12 +191,8 @@ func reportError(err error) {
 	}
 }
 
-func supervise(ctx context.Context, cfg Config, t transport, startupDeadline time.Time, startupSeconds int64) (result int) {
-	if !time.Now().Before(startupDeadline) {
-		code := failureResult(ctx, 1)
-		reportError(startupTimeoutError(startupSeconds, "preparing XtMapper"))
-		return code
-	}
+// supervise launches the compositor and remote XtMapper and coordinates their exit and cleanup.
+func supervise(ctx context.Context, cfg Config, t transport, startupSeconds int64) (result int) {
 	parentCtx := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	var owned []*child
@@ -240,7 +236,9 @@ func supervise(ctx context.Context, cfg Config, t transport, startupDeadline tim
 	owned = append(owned, comp)
 	evtWrite.Close()
 
-	setupCtx, stopSetup := context.WithDeadline(ctx, startupDeadline)
+	// Setup cancellation follows the compositor and parent lifecycle; the boot
+	// deadline is enforced only by the boot polling loop in setupWithDeadline.
+	setupCtx, stopSetup := context.WithCancel(ctx)
 	go func() {
 		select {
 		case <-comp.dead:
@@ -250,7 +248,7 @@ func supervise(ctx context.Context, cfg Config, t transport, startupDeadline tim
 		case <-setupCtx.Done():
 		}
 	}()
-	remoteCmd, err := setupWithDeadline(setupCtx, t, cfg.UseADB, cfg.XtmapperArgs, startupDeadline, startupSeconds)
+	remoteCmd, err := setupWithDeadline(setupCtx, t, cfg.UseADB, cfg.XtmapperArgs, startupSeconds)
 	stopSetup()
 	if err != nil {
 		if comp.exited() && comp.code != 0 {
@@ -265,12 +263,6 @@ func supervise(ctx context.Context, cfg Config, t transport, startupDeadline tim
 		markPipelineExitCause(parentCtx, comp.code)
 		return comp.code
 	}
-	if !time.Now().Before(startupDeadline) {
-		code := failureResult(parentCtx, 1)
-		reportError(startupTimeoutError(startupSeconds, "launching remote XtMapper"))
-		return code
-	}
-
 	// Both children use the kernel pipe directly; Go never reads or buffers events.
 	remoteCmd.Stdin = evtRead
 	remoteCmd.Stdout = os.Stdout
@@ -299,10 +291,13 @@ func supervise(ctx context.Context, cfg Config, t transport, startupDeadline tim
 		if ctx.Err() != nil {
 			return 1
 		}
-		code := comp.code
+		if remote.exited() {
+			code := pipelineExitStatus(comp, remote)
+			markPipelineExitCause(parentCtx, code)
+			return code
+		}
+		code := terminatePeerAfterRuntimeExit(cancel, remote, comp.code, "remote XtMapper")
 		markPipelineExitCause(parentCtx, code)
-		cancel()
-		<-remote.dead
 		return code
 	case <-remote.dead:
 		markPipelineExitCause(parentCtx, remote.code)
@@ -314,10 +309,13 @@ func supervise(ctx context.Context, cfg Config, t transport, startupDeadline tim
 		if ctx.Err() != nil {
 			return 1
 		}
-		code := remote.code
+		if comp.exited() {
+			code := pipelineExitStatus(comp, remote)
+			markPipelineExitCause(parentCtx, code)
+			return code
+		}
+		code := terminatePeerAfterRuntimeExit(cancel, comp, remote.code, "compositor")
 		markPipelineExitCause(parentCtx, code)
-		cancel()
-		<-comp.dead
 		return code
 	case <-ctx.Done():
 		return 1 // Run preserves the initiating signal's status.
@@ -328,6 +326,57 @@ func supervise(ctx context.Context, cfg Config, t transport, startupDeadline tim
 // and observe EOF. A sub-second grace can truncate valid input when a consumer
 // is delayed during startup; cleanup remains bounded when the peer ignores EOF.
 const runtimePeerExitGrace = 2 * time.Second
+
+// A canceled runtime peer is cleaned up with TERM and then KILL. Never wait for
+// its status beyond that bounded cleanup window: cmd.Wait may remain blocked
+// even after group cleanup has exhausted its collection period.
+const runtimePeerCleanupCollectionWindow = cleanupTermGrace + cleanupKillGrace
+
+// waitForChildExit reports whether a child completed before the supplied timeout.
+func waitForChildExit(dead <-chan struct{}, timeout time.Duration) bool {
+	if timeout <= 0 {
+		select {
+		case <-dead:
+			return true
+		default:
+			return false
+		}
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-dead:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+// terminatePeerAfterRuntimeExit cancels a peer and collects its exit status within the cleanup bound.
+func terminatePeerAfterRuntimeExit(cancel context.CancelFunc, peer *child, initiatingCode int, peerName string) int {
+	return terminatePeerAfterRuntimeExitWithWait(cancel, peer, initiatingCode, peerName, waitForChildExit)
+}
+
+// terminatePeerAfterRuntimeExitWithWait applies bounded peer cleanup using the supplied wait strategy.
+func terminatePeerAfterRuntimeExitWithWait(
+	cancel context.CancelFunc,
+	peer *child,
+	initiatingCode int,
+	peerName string,
+	wait func(<-chan struct{}, time.Duration) bool,
+) int {
+	cancel()
+	if !wait(peer.dead, runtimePeerCleanupCollectionWindow) {
+		fmt.Fprintf(os.Stderr, "Error: timed out waiting for %s process %d after cleanup; exit status collection is incomplete\n", peerName, peer.cmd.Process.Pid)
+	}
+	// Forced cleanup after the natural-exit grace is not a successful pipeline
+	// completion, even if the initiating child itself exited with status zero.
+	if initiatingCode == 0 {
+		reportError(fmt.Errorf("%s did not exit within %s after its peer exited; refusing a successful pipeline result", peerName, runtimePeerExitGrace))
+		return 1
+	}
+	return initiatingCode
+}
 
 func waitForPeerExit(ctx context.Context, peer *child) bool {
 	timer := time.NewTimer(runtimePeerExitGrace)
@@ -359,23 +408,33 @@ func signalStatus(s os.Signal) int {
 	return 143
 }
 
+// setup validates the configured boot-wait period before beginning startup discovery.
 func setup(ctx context.Context, t transport, useADB bool, args []string) (*exec.Cmd, error) {
 	bootWait := BootWaitSeconds()
 	if bootWait <= 0 {
 		return nil, errors.New("XTMAPPER_BOOT_WAIT_SECONDS must be a positive integer")
 	}
-	deadline := time.Now().Add(time.Duration(bootWait) * time.Second)
-	return setupWithDeadline(ctx, t, useADB, args, deadline, bootWait)
+	return setupWithDeadline(ctx, t, useADB, args, bootWait)
 }
 
 func deadlineExpired(ctx context.Context, deadline time.Time) bool {
 	return errors.Is(ctx.Err(), context.DeadlineExceeded) || !time.Now().Before(deadline)
 }
 
-func setupWithDeadline(ctx context.Context, t transport, useADB bool, args []string, deadline time.Time, startupSeconds int64) (*exec.Cmd, error) {
+// setupWithDeadline begins startup discovery with the default independent ABI and APK probe timeouts.
+func setupWithDeadline(ctx context.Context, t transport, useADB bool, args []string, startupSeconds int64) (*exec.Cmd, error) {
+	return setupWithProbeTimeouts(ctx, t, useADB, args, startupSeconds, abiProbeTimeout, apkProbeTimeout)
+}
+
+// setupWithProbeTimeouts runs startup discovery with independently supplied
+// probe timeouts so timeout behavior can be tested without long waits.
+func setupWithProbeTimeouts(ctx context.Context, t transport, useADB bool, args []string, startupSeconds int64, abiTimeout, apkTimeout time.Duration) (*exec.Cmd, error) {
 	if startupSeconds <= 0 {
 		return nil, errors.New("XTMAPPER_BOOT_WAIT_SECONDS must be a positive integer")
 	}
+	// One monotonic deadline is shared by boot probes and retry sleeps only.
+	// ABI and APK discovery each receive their own command-level timeout below.
+	deadline := time.Now().Add(time.Duration(startupSeconds) * time.Second)
 	for {
 		if err := ctx.Err(); err != nil {
 			if deadlineExpired(ctx, deadline) {
@@ -406,45 +465,31 @@ func setupWithDeadline(ctx context.Context, t transport, useADB bool, args []str
 		}
 	}
 
-	remaining := time.Until(deadline)
-	if remaining <= 0 {
-		return nil, startupTimeoutError(startupSeconds, "determining the Android CPU ABI")
-	}
-	abi, err := t.getprop(ctx, "ro.product.cpu.abi", min(abiProbeTimeout, remaining))
+	abi, err := t.getprop(ctx, "ro.product.cpu.abi", abiTimeout)
 	if err != nil || abi == "" {
-		if deadlineExpired(ctx, deadline) {
-			return nil, startupTimeoutError(startupSeconds, "determining the Android CPU ABI")
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if errors.Is(err, ErrTimedOut) {
+			return nil, fmt.Errorf("timed out after %s while determining the Android CPU ABI", abiTimeout)
 		}
 		return nil, errors.New("could not determine the Android CPU ABI")
 	}
 	for _, pkg := range PackageProbeOrder {
 		if err := ctx.Err(); err != nil {
-			if deadlineExpired(ctx, deadline) {
-				return nil, startupTimeoutError(startupSeconds, "locating the XtMapper APK")
-			}
 			return nil, err
 		}
-		remaining = time.Until(deadline)
-		if remaining <= 0 {
-			return nil, startupTimeoutError(startupSeconds, "locating the XtMapper APK")
-		}
-		apkPath, probeErr := t.packagePathProbeWithTimeout(ctx, pkg, min(apkProbeTimeout, remaining))
+		apkPath, probeErr := t.packagePathProbeWithTimeout(ctx, pkg, apkTimeout)
 		if probeErr != nil {
-			if deadlineExpired(ctx, deadline) {
-				return nil, startupTimeoutError(startupSeconds, "locating the XtMapper APK")
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
 			}
 			continue
 		}
 		if apkPath != "" {
-			if !time.Now().Before(deadline) {
-				return nil, startupTimeoutError(startupSeconds, "locating the XtMapper APK")
-			}
 			command := buildRemoteCommand(useADB, deriveNativeLibPath(apkPath, abi), apkPath, args)
 			return t.remoteShellCmd(command), nil
 		}
-	}
-	if deadlineExpired(ctx, deadline) {
-		return nil, startupTimeoutError(startupSeconds, "locating the XtMapper APK")
 	}
 	return nil, errors.New("no installation of XtMapper was found")
 }

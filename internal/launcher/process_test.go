@@ -14,6 +14,84 @@ import (
 	"time"
 )
 
+type deadlineOnlyContext struct {
+	context.Context
+	deadline time.Time
+}
+
+func (c deadlineOnlyContext) Deadline() (time.Time, bool) {
+	return c.deadline, true
+}
+
+// TestCommandExitResultHonorsDeadline checks exit results against deadlines and cancellation.
+func TestCommandExitResultHonorsDeadline(t *testing.T) {
+	expiredCtx, cancelExpired := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancelExpired()
+
+	activeCtx, cancelActive := context.WithTimeout(context.Background(), time.Minute)
+	defer cancelActive()
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	cases := []struct {
+		name     string
+		ctx      context.Context
+		code     int
+		wantCode int
+		wantErr  error
+	}{
+		{name: "deadline already reported", ctx: expiredCtx, code: 0, wantCode: -1, wantErr: ErrTimedOut},
+		{
+			name:     "deadline elapsed before context timer publication",
+			ctx:      deadlineOnlyContext{Context: context.Background(), deadline: time.Now().Add(-time.Second)},
+			code:     0,
+			wantCode: -1,
+			wantErr:  ErrTimedOut,
+		},
+		{name: "context canceled", ctx: canceledCtx, code: 0, wantCode: -1, wantErr: context.Canceled},
+		{name: "exit before deadline preserves status", ctx: activeCtx, code: 9, wantCode: 9},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotCode, err := commandExitResult(tc.ctx, tc.code)
+			if gotCode != tc.wantCode {
+				t.Fatalf("result code = %d, want %d (err %v)", gotCode, tc.wantCode, err)
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("result error = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestRunWithTimeoutHonorsExpiredParentDeadlineOnChildExit covers a deadline/exit race through the command runner.
+func TestRunWithTimeoutHonorsExpiredParentDeadlineOnChildExit(t *testing.T) {
+	// The parent exposes an elapsed deadline without publishing cancellation.
+	// The child exits immediately, deterministically exercising runWithTimeout's
+	// child-completion branch rather than its context-done branch.
+	ctx := deadlineOnlyContext{
+		Context:  context.Background(),
+		deadline: time.Now().Add(-time.Second),
+	}
+
+	code, err := runWithTimeout(ctx, exec.Command("sh", "-c", "exit 9"), time.Minute, false)
+	if code != -1 || !errors.Is(err, ErrTimedOut) {
+		t.Fatalf("completed child result = (%d, %v), want (-1, %v)", code, err, ErrTimedOut)
+	}
+}
+
+// TestRunWithTimeoutPreservesNonzeroChildExit checks that a completed child's status is returned without an execution error.
+func TestRunWithTimeoutPreservesNonzeroChildExit(t *testing.T) {
+	code, err := runWithTimeout(context.Background(), exec.Command("sh", "-c", "exit 9"), time.Second, true)
+	if err != nil {
+		t.Fatalf("runWithTimeout error = %v, want nil for an ordinary nonzero child exit", err)
+	}
+	if code != 9 {
+		t.Fatalf("runWithTimeout exit code = %d, want 9", code)
+	}
+}
+
 func TestRunBoundedTimeoutKillsProcessGroupDescendants(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "descendant.pid")
 	cmd := exec.Command("sh", "-c", fmt.Sprintf("sleep 30 & echo $! > %q; wait", pidFile))
