@@ -226,6 +226,54 @@ func assertTimedOutProbeStopped(t *testing.T, pid int) {
 	t.Fatalf("ABI probe process %d survived its command timeout", pid)
 }
 
+func TestAPKDiscoveryUsesFreshTimeoutPerProbe(t *testing.T) {
+	apkTimeout := 50 * time.Millisecond
+	debugProbeMarker := filepath.Join(t.TempDir(), "debug-probe-completed")
+	var probes []string
+	var remoteCommand string
+	tr := transport{
+		probeCmd: func(verb string, args ...string) *exec.Cmd {
+			if verb == "getprop" && len(args) == 1 && args[0] == "sys.boot_completed" {
+				return exec.Command("sh", "-c", "printf '1\\n'")
+			}
+			if verb == "getprop" && len(args) == 1 && args[0] == "ro.product.cpu.abi" {
+				return exec.Command("sh", "-c", "printf 'x86_64\\n'")
+			}
+			if verb == "pm" && len(args) == 2 && args[0] == "path" {
+				pkg := args[1]
+				probes = append(probes, pkg)
+				if pkg == "xtr.keymapper.debug" {
+					// If the timeout is not applied, this command completes and
+					// leaves a marker before returning a debug APK path.
+					script := fmt.Sprintf("sleep 1; printf done > %q; printf 'package:/data/app/debug/base.apk\\n'", debugProbeMarker)
+					return exec.Command("sh", "-c", script)
+				}
+				if pkg == "xtr.keymapper" {
+					return exec.Command("sh", "-c", "printf 'package:/data/app/release/base.apk\\n'")
+				}
+			}
+			return exec.Command("sh", "-c", "exit 1")
+		},
+		remoteShellCmd: func(command string) *exec.Cmd {
+			remoteCommand = command
+			return exec.Command("sh", "-c", "exit 0")
+		},
+	}
+
+	if _, err := setupWithProbeTimeouts(context.Background(), tr, true, nil, 1, time.Second, apkTimeout); err != nil {
+		t.Fatalf("APK discovery failed after the debug probe timed out: %v", err)
+	}
+	if got, want := strings.Join(probes, "\\n"), "xtr.keymapper.debug\\nxtr.keymapper"; got != want {
+		t.Fatalf("APK probe order = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(debugProbeMarker); !os.IsNotExist(err) {
+		t.Fatalf("debug probe completed instead of timing out; marker stat error = %v", err)
+	}
+	if !strings.Contains(remoteCommand, "/data/app/release/base.apk") {
+		t.Fatalf("remote command did not use the release APK found after the debug timeout: %q", remoteCommand)
+	}
+}
+
 func TestPrepareStartupRunsWaydroidLifecycleInOrder(t *testing.T) {
 	var calls []string
 	transport := transport{
