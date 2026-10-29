@@ -23,6 +23,7 @@ func (c deadlineOnlyContext) Deadline() (time.Time, bool) {
 	return c.deadline, true
 }
 
+// TestCommandExitResultHonorsDeadline checks exit results against deadlines and cancellation.
 func TestCommandExitResultHonorsDeadline(t *testing.T) {
 	expiredCtx, cancelExpired := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancelExpired()
@@ -64,6 +65,7 @@ func TestCommandExitResultHonorsDeadline(t *testing.T) {
 	}
 }
 
+// TestRunWithTimeoutHonorsExpiredParentDeadlineOnChildExit covers a deadline/exit race through the command runner.
 func TestRunWithTimeoutHonorsExpiredParentDeadlineOnChildExit(t *testing.T) {
 	// The parent exposes an elapsed deadline without publishing cancellation.
 	// The child exits immediately, deterministically exercising runWithTimeout's
@@ -79,6 +81,7 @@ func TestRunWithTimeoutHonorsExpiredParentDeadlineOnChildExit(t *testing.T) {
 	}
 }
 
+// TestRunWithTimeoutPreservesNonzeroChildExit checks that a completed child's status is returned without an execution error.
 func TestRunWithTimeoutPreservesNonzeroChildExit(t *testing.T) {
 	code, err := runWithTimeout(context.Background(), exec.Command("sh", "-c", "exit 9"), time.Second, true)
 	if err != nil {

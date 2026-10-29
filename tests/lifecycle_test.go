@@ -434,6 +434,7 @@ func TestStartupDeadlineStartsAfterWaydroidLifecycle(t *testing.T) {
 	}
 }
 
+// TestDiscoveryProbesHaveIndependentTimeouts verifies that ABI and APK discovery do not consume the boot-wait budget.
 func TestDiscoveryProbesHaveIndependentTimeouts(t *testing.T) {
 	for _, tc := range []struct {
 		name       string

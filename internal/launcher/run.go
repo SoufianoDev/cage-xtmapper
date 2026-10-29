@@ -112,6 +112,7 @@ func Run(cfg Config) int {
 	}
 }
 
+// run prepares the selected transport and delegates child lifecycle management to supervise.
 func run(ctx context.Context, cfg Config) int {
 	ApplyEnvironment(&cfg)
 	if cfg.Tools.SelfExe == "" {
@@ -190,6 +191,7 @@ func reportError(err error) {
 	}
 }
 
+// supervise launches the compositor and remote XtMapper and coordinates their exit and cleanup.
 func supervise(ctx context.Context, cfg Config, t transport, startupSeconds int64) (result int) {
 	parentCtx := ctx
 	ctx, cancel := context.WithCancel(ctx)
@@ -330,6 +332,7 @@ const runtimePeerExitGrace = 2 * time.Second
 // even after group cleanup has exhausted its collection period.
 const runtimePeerCleanupCollectionWindow = cleanupTermGrace + cleanupKillGrace
 
+// waitForChildExit reports whether a child completed before the supplied timeout.
 func waitForChildExit(dead <-chan struct{}, timeout time.Duration) bool {
 	if timeout <= 0 {
 		select {
@@ -349,10 +352,12 @@ func waitForChildExit(dead <-chan struct{}, timeout time.Duration) bool {
 	}
 }
 
+// terminatePeerAfterRuntimeExit cancels a peer and collects its exit status within the cleanup bound.
 func terminatePeerAfterRuntimeExit(cancel context.CancelFunc, peer *child, initiatingCode int, peerName string) int {
 	return terminatePeerAfterRuntimeExitWithWait(cancel, peer, initiatingCode, peerName, waitForChildExit)
 }
 
+// terminatePeerAfterRuntimeExitWithWait applies bounded peer cleanup using the supplied wait strategy.
 func terminatePeerAfterRuntimeExitWithWait(
 	cancel context.CancelFunc,
 	peer *child,
@@ -403,6 +408,7 @@ func signalStatus(s os.Signal) int {
 	return 143
 }
 
+// setup validates the configured boot-wait period before beginning startup discovery.
 func setup(ctx context.Context, t transport, useADB bool, args []string) (*exec.Cmd, error) {
 	bootWait := BootWaitSeconds()
 	if bootWait <= 0 {
@@ -415,6 +421,7 @@ func deadlineExpired(ctx context.Context, deadline time.Time) bool {
 	return errors.Is(ctx.Err(), context.DeadlineExceeded) || !time.Now().Before(deadline)
 }
 
+// setupWithDeadline begins startup discovery with the default independent ABI and APK probe timeouts.
 func setupWithDeadline(ctx context.Context, t transport, useADB bool, args []string, startupSeconds int64) (*exec.Cmd, error) {
 	return setupWithProbeTimeouts(ctx, t, useADB, args, startupSeconds, abiProbeTimeout, apkProbeTimeout)
 }

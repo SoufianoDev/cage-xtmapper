@@ -56,6 +56,7 @@ func TestFailureResultRecordsCauseBeforeReturning(t *testing.T) {
 	}
 }
 
+// TestWaitForChildExitIsBounded covers an already-exited child and a pending child that reaches the timeout.
 func TestWaitForChildExitIsBounded(t *testing.T) {
 	t.Run("already exited", func(t *testing.T) {
 		dead := make(chan struct{})
@@ -76,6 +77,7 @@ func TestWaitForChildExitIsBounded(t *testing.T) {
 	})
 }
 
+// TestTerminatePeerAfterRuntimeExitUsesBoundedCollection checks cleanup bounds, warning output, and status preservation.
 func TestTerminatePeerAfterRuntimeExitUsesBoundedCollection(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
@@ -150,6 +152,7 @@ func TestTerminatePeerAfterRuntimeExitUsesBoundedCollection(t *testing.T) {
 	}
 }
 
+// TestABIDiscoveryTimeoutTerminatesProbe verifies that a stalled ABI probe is stopped before remote launch.
 func TestABIDiscoveryTimeoutTerminatesProbe(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "abi-probe.pid")
 	abiTimeout := 200 * time.Millisecond
@@ -183,6 +186,7 @@ func TestABIDiscoveryTimeoutTerminatesProbe(t *testing.T) {
 	assertTimedOutProbeStopped(t, pid)
 }
 
+// readTimedOutProbePID waits for a timed-out probe fixture to publish its process ID.
 func readTimedOutProbePID(t *testing.T, path string) int {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
@@ -204,6 +208,7 @@ func readTimedOutProbePID(t *testing.T, path string) int {
 	return 0
 }
 
+// assertTimedOutProbeStopped checks that a timed-out probe is gone or has been reaped.
 func assertTimedOutProbeStopped(t *testing.T, pid int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -226,6 +231,7 @@ func assertTimedOutProbeStopped(t *testing.T, pid int) {
 	t.Fatalf("ABI probe process %d survived its command timeout", pid)
 }
 
+// TestAPKDiscoveryUsesFreshTimeoutPerProbe verifies that a timed-out debug lookup does not consume the release lookup's budget.
 func TestAPKDiscoveryUsesFreshTimeoutPerProbe(t *testing.T) {
 	apkTimeout := 2 * time.Second
 	debugProbeMarker := filepath.Join(t.TempDir(), "debug-probe-completed")
@@ -274,6 +280,7 @@ func TestAPKDiscoveryUsesFreshTimeoutPerProbe(t *testing.T) {
 	}
 }
 
+// TestPrepareStartupRunsWaydroidLifecycleInOrder verifies that session stop precedes container start.
 func TestPrepareStartupRunsWaydroidLifecycleInOrder(t *testing.T) {
 	var calls []string
 	transport := transport{

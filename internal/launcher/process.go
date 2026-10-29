@@ -162,6 +162,7 @@ func runBoundedForeground(ctx context.Context, cmd *exec.Cmd, timeout time.Durat
 	return runWithTimeout(ctx, cmd, timeout, false)
 }
 
+// runWithTimeout runs a command under a deadline and returns its exit status or cancellation error.
 func runWithTimeout(ctx context.Context, cmd *exec.Cmd, timeout time.Duration, processGroup bool) (int, error) {
 	if timeout <= 0 {
 		return -1, ErrTimedOut
