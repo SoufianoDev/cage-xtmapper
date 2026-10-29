@@ -64,17 +64,16 @@ func TestCommandExitResultHonorsDeadline(t *testing.T) {
 	}
 }
 
-func TestWaitForCommandResultHonorsExpiredDeadlineOnChildCompletion(t *testing.T) {
-	// The nil Done channel forces the already-completed child branch while
-	// Deadline reports an elapsed deadline not yet published by a timer.
+func TestRunWithTimeoutHonorsExpiredParentDeadlineOnChildExit(t *testing.T) {
+	// The parent exposes an elapsed deadline without publishing cancellation.
+	// The child exits immediately, deterministically exercising runWithTimeout's
+	// child-completion branch rather than its context-done branch.
 	ctx := deadlineOnlyContext{
 		Context:  context.Background(),
 		deadline: time.Now().Add(-time.Second),
 	}
-	dead := make(chan struct{})
-	close(dead)
 
-	code, err := waitForCommandResult(ctx, dead, func() int { return 9 })
+	code, err := runWithTimeout(ctx, exec.Command("sh", "-c", "exit 9"), time.Minute, false)
 	if code != -1 || !errors.Is(err, ErrTimedOut) {
 		t.Fatalf("completed child result = (%d, %v), want (-1, %v)", code, err, ErrTimedOut)
 	}
