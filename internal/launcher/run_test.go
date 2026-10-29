@@ -160,7 +160,7 @@ func TestABIDiscoveryTimeoutTerminatesProbe(t *testing.T) {
 				return exec.Command("sh", "-c", "printf '1\\n'")
 			}
 			if verb == "getprop" && len(args) == 1 && args[0] == "ro.product.cpu.abi" {
-				return exec.Command("sh", "-c", fmt.Sprintf("printf '%%s\\n' \"$\" > %q; exec sleep 30", pidFile))
+				return exec.Command("sh", "-c", fmt.Sprintf("printf '%%s\\n' \"$$\" > %q; exec sleep 30", pidFile))
 			}
 			return exec.Command("sh", "-c", "exit 1")
 		},

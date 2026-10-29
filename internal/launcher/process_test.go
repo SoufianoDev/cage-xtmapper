@@ -64,7 +64,6 @@ func TestCommandExitResultHonorsDeadline(t *testing.T) {
 	}
 }
 
-
 func TestWaitForCommandResultHonorsExpiredDeadlineOnChildCompletion(t *testing.T) {
 	// The nil Done channel forces the already-completed child branch while
 	// Deadline reports an elapsed deadline not yet published by a timer.
