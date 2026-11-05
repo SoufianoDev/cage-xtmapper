@@ -30,7 +30,7 @@ echo "ninja $*" >> "$MOCK_LOG"
 if [[ "${1-}" == -C ]]; then
     shift 2
     if [[ "${1-}" == -t && "${2-}" == commands && "$3" == cage_xtmapper ]]; then
-        printf 'cc -o cage_xtmapper cage_xtmapper.p/cage.c.o cage_xtmapper.p/seat.c.o -Wl,--as-needed -Wl,--start-group subprojects/wlroots/libwlroots-0.20.a -lffi -lm -Wl,--end-group\n'
+        printf 'cc -o cage_xtmapper cage_xtmapper.p/cage.c.o cage_xtmapper.p/seat.c.o -Wl,--as-needed -Wl,--fatal-warnings -Wl,--start-group subprojects/wlroots/libwlroots-0.20.a -lffi -lm -Wl,--end-group\n'
     fi
 fi
 MOCK
@@ -158,6 +158,7 @@ grep -q '^go build -a -o .* ./cmd/cage-xtmapper$' "$MOCK_LOG" || fail 'go build 
 grep -Fqx 'CGO_LDFLAGS_ALLOW=^-Wl,--fatal-warnings$' "$MOCK_LOG" || fail 'Go build did not allow only the required native linker flag'
 grep -q "$root/build/meson/libcage_xtmapper.a" "$root/build/native/pkgconfig/cage-xtmapper-native.pc" || fail 'pc contract lost the Cage library'
 grep -q -- '-Wl,--start-group' "$root/build/native/pkgconfig/cage-xtmapper-native.pc" || fail 'pc contract lost the archive group'
+grep -q -- '-Wl,--fatal-warnings' "$root/build/native/pkgconfig/cage-xtmapper-native.pc" || fail 'pc contract lost the fatal linker warning policy'
 grep -q -- '-Wl,--end-group' "$root/build/native/pkgconfig/cage-xtmapper-native.pc" || fail 'pc contract lost the archive group end'
 grep -q "$root/build/meson/subprojects/wlroots/libwlroots-0.20.a" "$root/build/native/pkgconfig/cage-xtmapper-native.pc" || fail 'pc contract did not absolutize subproject archives'
 grep -q -- '-I'"$root/build/source/cage-0.3.0" "$root/build/native/pkgconfig/cage-xtmapper-native.pc" || fail 'pc contract lost the Cage source include path'
