@@ -52,6 +52,12 @@ grep -q 'Packages:.*wayland-devel' "$tmp/out" || fail 'Fedora packages were not 
 write_os arch
 OS_RELEASE_FILE="$tmp/os-release" "$repo/install_deps.sh" --dry-run > "$tmp/out"
 grep -q 'Packages:.*base-devel' "$tmp/out" || fail 'Arch packages were not selected'
+
+# Arch keeps the full-upgrade transaction but must leave package confirmations enabled.
+: > "$MOCK_LOG"
+OS_RELEASE_FILE="$tmp/os-release" "$repo/install_deps.sh" > "$tmp/out"
+grep -Eq '^(sudo )?pacman -Syu --needed ' "$MOCK_LOG" || fail 'Arch install did not use a confirmed full-upgrade transaction'
+grep -q -- '--noconfirm' "$MOCK_LOG" && fail 'Arch install disabled pacman confirmation prompts'
 write_os alpine
 OS_RELEASE_FILE="$tmp/os-release" "$repo/install_deps.sh" --dry-run > "$tmp/out"
 grep -q 'Packages:.*build-base' "$tmp/out" || fail 'Alpine packages were not selected'
