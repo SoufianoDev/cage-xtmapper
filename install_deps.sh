@@ -40,7 +40,8 @@ elif [[ "$distro" == fedora ]]; then
     packages=("${fedora_deps[@]}")
 elif [[ "$distro" == arch || " $distro_like " == *' arch '* ]]; then
     # Keep Arch's full system upgrade and dependency install in one transaction.
-    install_cmd=(pacman -Syu --noconfirm --needed)
+    # Leave confirmation enabled so package replacements remain an explicit choice.
+    install_cmd=(pacman -Syu --needed)
     packages=("${arch_deps[@]}")
 elif [[ "$distro" == alpine ]]; then
     update_cmd=(apk update)

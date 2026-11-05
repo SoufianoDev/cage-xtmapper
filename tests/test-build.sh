@@ -6,6 +6,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
 go -C "$repo" build -o "$tmp/release-tool" ./tools/release
 export MOCK_RELEASE_TOOL="$tmp/release-tool"
+unset CGO_LDFLAGS_ALLOW
 
 make_fixture() {
     local root="$1"
@@ -29,7 +30,7 @@ echo "ninja $*" >> "$MOCK_LOG"
 if [[ "${1-}" == -C ]]; then
     shift 2
     if [[ "${1-}" == -t && "${2-}" == commands && "$3" == cage_xtmapper ]]; then
-        printf 'cc -o cage_xtmapper cage_xtmapper.p/cage.c.o cage_xtmapper.p/seat.c.o -Wl,--as-needed -Wl,--start-group subprojects/wlroots/libwlroots-0.20.a -lffi -lm -Wl,--end-group\n'
+        printf 'cc -o cage_xtmapper cage_xtmapper.p/cage.c.o cage_xtmapper.p/seat.c.o -Wl,--as-needed -Wl,--fatal-warnings -Wl,--start-group subprojects/wlroots/libwlroots-0.20.a -lffi -lm -Wl,--end-group\n'
     fi
 fi
 MOCK
@@ -45,6 +46,7 @@ if [[ "${1-}" == run && "${2-}" == ./tools/release ]]; then
     fi
 fi
 if [[ "${1-}" == build ]]; then
+    printf 'CGO_LDFLAGS_ALLOW=%s\n' "${CGO_LDFLAGS_ALLOW-}" >> "$MOCK_LOG"
     [[ "${GO_FAIL-}" != build ]] || exit 32
     mkdir -p "$MOCK_ROOT/build/go"
     printf '#!/bin/sh\nexec true\n' > "$MOCK_ROOT/build/go/cage-xtmapper"
@@ -153,8 +155,10 @@ grep -q '^ninja -C .* -t commands cage_xtmapper' "$MOCK_LOG" || fail 'ninja link
 if [[ -e "$root/build/installed/usr/local/lib" ]]; then fail 'installed library dir should have been removed'; fi
 [[ -x "$root/build/go/cage-xtmapper" ]] || fail 'Go ELF artifact is missing from the build tree'
 grep -q '^go build -a -o .* ./cmd/cage-xtmapper$' "$MOCK_LOG" || fail 'go build did not rebuild the native link'
+grep -Fqx 'CGO_LDFLAGS_ALLOW=^-Wl,--fatal-warnings$' "$MOCK_LOG" || fail 'Go build did not allow only the required native linker flag'
 grep -q "$root/build/meson/libcage_xtmapper.a" "$root/build/native/pkgconfig/cage-xtmapper-native.pc" || fail 'pc contract lost the Cage library'
 grep -q -- '-Wl,--start-group' "$root/build/native/pkgconfig/cage-xtmapper-native.pc" || fail 'pc contract lost the archive group'
+grep -q -- '-Wl,--fatal-warnings' "$root/build/native/pkgconfig/cage-xtmapper-native.pc" || fail 'pc contract lost the fatal linker warning policy'
 grep -q -- '-Wl,--end-group' "$root/build/native/pkgconfig/cage-xtmapper-native.pc" || fail 'pc contract lost the archive group end'
 grep -q "$root/build/meson/subprojects/wlroots/libwlroots-0.20.a" "$root/build/native/pkgconfig/cage-xtmapper-native.pc" || fail 'pc contract did not absolutize subproject archives'
 grep -q -- '-I'"$root/build/source/cage-0.3.0" "$root/build/native/pkgconfig/cage-xtmapper-native.pc" || fail 'pc contract lost the Cage source include path'
@@ -164,10 +168,11 @@ grep -q '^release record-build$' "$MOCK_LOG" || fail 'release metadata was not r
 
 # Failed Go compilation leaves the last successful staged application intact.
 printf 'previous build\n' > "$root/build/installed/usr/local/bin/cage-xtmapper"
-if PATH="$root/bin:$PATH" GO_FAIL=build "$root/build.sh" >"$tmp/out" 2>&1; then
+if PATH="$root/bin:$PATH" CGO_LDFLAGS_ALLOW='^-Wl,--as-needed$' GO_FAIL=build "$root/build.sh" >"$tmp/out" 2>&1; then
     fail 'Go build failure unexpectedly succeeded'
 fi
 grep -q 'building the cage-xtmapper ELF failed' "$tmp/out"
+grep -Fqx 'CGO_LDFLAGS_ALLOW=^-Wl,--as-needed$|^-Wl,--fatal-warnings$' "$MOCK_LOG" || fail 'existing cgo allowlist was not preserved'
 grep -q '^previous build$' "$root/build/installed/usr/local/bin/cage-xtmapper" || fail 'failed Go build replaced the staged application'
 
 # A missing native tree is reported before invoking Meson.
