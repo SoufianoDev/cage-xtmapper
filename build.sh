@@ -149,7 +149,14 @@ pc_file="$build_root/native/pkgconfig/cage-xtmapper-native.pc"
 (cd -- "$script_dir" && go run ./tools/release link-contract "$meson_build_dir" "$source_dir" "$link_line") > "$pc_file" || fail "generating the native link contract failed"
 
 # Go's cache does not track changes to the external native archives.
-if ! (cd "$script_dir" && CGO_ENABLED=1 PKG_CONFIG_PATH="$build_root/native/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" go build -a -o "$build_root/go/cage-xtmapper" ./cmd/cage-xtmapper); then
+# Ninja's native link command includes this policy flag in the generated pkg-config contract.
+# Allow only that exact linker argument while preserving any caller-provided allowlist.
+cgo_ldflags_allow="${CGO_LDFLAGS_ALLOW:-}"
+if [[ -n "$cgo_ldflags_allow" ]]; then
+    cgo_ldflags_allow+="|"
+fi
+cgo_ldflags_allow+='^-Wl,--fatal-warnings$'
+if ! (cd "$script_dir" && CGO_ENABLED=1 CGO_LDFLAGS_ALLOW="$cgo_ldflags_allow" PKG_CONFIG_PATH="$build_root/native/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" go build -a -o "$build_root/go/cage-xtmapper" ./cmd/cage-xtmapper); then
     fail "building the cage-xtmapper ELF failed"
 fi
 printf 'build_type=%s\nfingerprint=%s\n%s\n' \
