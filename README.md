@@ -64,7 +64,7 @@ cage-xtmapper --window-width 1280 --window-height 720 --refresh-mhz 60000
 | `--xtmapper-args ARG...` | Append all remaining arguments to XtMapper's default `--wayland-client` argument. |
 | `-h`, `--help` | Show help. |
 
-Press **F10** to switch mouse handling between XtMapper and Waydroid. The Cage fork's [`togglekey.h`](native-src/cage/togglekey.h) defines this key.
+Press **F10** to switch mouse handling between Waydroid and XtMapper. Waydroid passthrough is the default, so F10 enters XtMapper capture mode. The Cage fork's [`togglekey.h`](native-src/cage/togglekey.h) defines this key.
 
 ## Common Setup Issues
 
@@ -72,13 +72,18 @@ Press **F10** to switch mouse handling between XtMapper and Waydroid. The Cage f
 
 In desktop mode, add your terminal application to Steam. Open it from the gaming session and run `cage-xtmapper`. The launcher uses `GAMESCOPE_WAYLAND_DISPLAY` when the session provides it.
 
-### Invisible Cursor
+### Invisible or Unreliable Cursor
 
-Enable Waydroid's subsurface cursor:
+Use Waydroid's shared-memory cursor path. This keeps the cursor visible inside
+nested compositors and avoids the subsurface cursor, which steals pointer focus
+and makes clicks arrive to Android as long-presses with missing releases:
 
 ```bash
-waydroid prop set persist.waydroid.cursor_on_subsurface true
+waydroid prop set persist.waydroid.cursor_on_subsurface false
+waydroid prop set persist.waydroid.cursor_force_shm true
 ```
+
+Restart the Waydroid session (or container) after setting both properties.
 
 ### Mouse Movement Conflicts
 

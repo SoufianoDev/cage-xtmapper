@@ -11,10 +11,14 @@
 #include "config.h"
 
 #include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdarg.h>
 #include <linux/input-event-codes.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <wayland-server-core.h>
 #include <wlr/backend.h>
 #include <wlr/backend/multi.h>
@@ -46,6 +50,39 @@
 #include <ctype.h>
 
 static void drag_icon_update_position(struct cg_drag_icon *drag_icon);
+
+/* Telemetry goes to stdout, which the launcher may not drain until a remote
+ * client attaches. A blocking write there stalls the whole event loop, so
+ * stdout is non-blocking and events are dropped while nobody reads. */
+static void
+xtmapper_emit(const char *fmt, ...)
+{
+	static bool nonblocking;
+	if (!nonblocking) {
+		int flags = fcntl(STDOUT_FILENO, F_GETFL, 0);
+		if (flags != -1) {
+			fcntl(STDOUT_FILENO, F_SETFL, flags | O_NONBLOCK);
+		}
+		nonblocking = true;
+	}
+
+	char buf[256];
+	va_list ap;
+	va_start(ap, fmt);
+	int len = vsnprintf(buf, sizeof(buf), fmt, ap);
+	va_end(ap);
+	if (len <= 0) {
+		return;
+	}
+	if ((size_t)len >= sizeof(buf)) {
+		len = sizeof(buf) - 1;
+	}
+
+	/* Lines stay below PIPE_BUF, so a short write only happens when the
+	 * reader is gone or full; dropping is correct then. */
+	ssize_t written = write(STDOUT_FILENO, buf, (size_t)len);
+	(void)written;
+}
 
 /* XDG toplevels may have nested surfaces, such as popup windows for context
  * menus or tooltips. This function tests if any of those are underneath the
@@ -305,11 +342,11 @@ handle_key_event(struct wlr_keyboard *keyboard, struct cg_seat *seat, void *data
 	const char *action = event->state == WL_KEYBOARD_KEY_STATE_PRESSED ? "DOWN" : "UP";
 
     if (strcmp(buf, "Control_L") == 0) {
-        printf("/dev/input/wl_keyboard: EV_KEY KEY_LEFTCTRL %s\n", action);
+        xtmapper_emit("/dev/input/wl_keyboard: EV_KEY KEY_LEFTCTRL %s\n", action);
     } else if (strcmp(buf, "Control_R") == 0) {
-        printf("/dev/input/wl_keyboard: EV_KEY KEY_RIGHTCTRL %s\n", action);
+        xtmapper_emit("/dev/input/wl_keyboard: EV_KEY KEY_RIGHTCTRL %s\n", action);
     } else if (strcmp(buf, "quotedbl") == 0) {
-        printf("/dev/input/wl_keyboard: EV_KEY KEY_GRAVE %s\n", action);
+        xtmapper_emit("/dev/input/wl_keyboard: EV_KEY KEY_GRAVE %s\n", action);
     } else {
 		int buf_n = strlen(buf);
         for (int i=0;i<buf_n;i++) buf[i] = toupper(buf[i]);
@@ -320,7 +357,7 @@ handle_key_event(struct wlr_keyboard *keyboard, struct cg_seat *seat, void *data
 				seat->xtmapper_disabled = !seat->xtmapper_disabled;
 			} 
 		}
-        printf("/dev/input/wl_keyboard: EV_KEY %s %s\n", keybuf, action);
+        xtmapper_emit("/dev/input/wl_keyboard: EV_KEY %s %s\n", keybuf, action);
     }
 
 }
@@ -631,7 +668,7 @@ handle_cursor_axis(struct wl_listener *listener, void *data)
 		else
 			return;
 
-		printf("/dev/input/wl_pointer_axis: EV_REL %s %d\n",
+		xtmapper_emit("/dev/input/wl_pointer_axis: EV_REL %s %d\n",
 		(event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL) ? "REL_WHEEL" : "REL_HWHEEL", delta);
 	}
 }
@@ -659,7 +696,7 @@ handle_cursor_button(struct wl_listener *listener, void *data)
 	} else {
 		int action = event->state == WL_POINTER_BUTTON_STATE_PRESSED ? 1 : 0;
 		const char *code = button_to_string(event->button);
-		printf("/dev/input/wl_pointer_button: EV_KEY %s %d\n", code, action);
+		xtmapper_emit("/dev/input/wl_pointer_button: EV_KEY %s %d\n", code, action);
 	}
 }
 
@@ -710,8 +747,8 @@ handle_cursor_motion_absolute(struct wl_listener *listener, void *data)
 		process_cursor_motion(seat, event->time_msec, dx, dy, dx, dy);
 		wlr_idle_notifier_v1_notify_activity(seat->server->idle, seat->seat);
 	} else {
-		printf("/dev/input/wl_pointer_motion: EV_ABS ABS_X %d\n", (int)roundf(lx));
-		printf("/dev/input/wl_pointer_motion: EV_ABS ABS_Y %d\n", (int)roundf(ly));
+		xtmapper_emit("/dev/input/wl_pointer_motion: EV_ABS ABS_X %d\n", (int)roundf(lx));
+		xtmapper_emit("/dev/input/wl_pointer_motion: EV_ABS ABS_Y %d\n", (int)roundf(ly));
 	}
 }
 
@@ -728,8 +765,8 @@ handle_cursor_motion_relative(struct wl_listener *listener, void *data)
 					event->unaccel_dy);
 		wlr_idle_notifier_v1_notify_activity(seat->server->idle, seat->seat);
 	} else {
-		printf("/dev/input/wl_pointer_relative: EV_REL REL_X %d\n", (int)roundf(event->delta_x));
-		printf("/dev/input/wl_pointer_relative: EV_REL REL_Y %d\n", (int)roundf(event->delta_y));
+		xtmapper_emit("/dev/input/wl_pointer_relative: EV_REL REL_X %d\n", (int)roundf(event->delta_x));
+		xtmapper_emit("/dev/input/wl_pointer_relative: EV_REL REL_Y %d\n", (int)roundf(event->delta_y));
 	}
 }
 
@@ -947,7 +984,9 @@ seat_create(struct cg_server *server, struct wlr_backend *backend)
 	seat->start_drag.notify = handle_start_drag;
 	wl_signal_add(&seat->seat->events.start_drag, &seat->start_drag);
 
-	seat->xtmapper_disabled = false;
+	/* Default to Waydroid passthrough: without a root-backed service the
+	 * captured events are dropped, so mouse input would be dead until F10. */
+	seat->xtmapper_disabled = true;
 	return seat;
 }
 
