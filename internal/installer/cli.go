@@ -1,4 +1,3 @@
-// Package installer manages system-wide releases using durable ownership records.
 package installer
 
 import (
