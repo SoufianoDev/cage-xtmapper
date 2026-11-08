@@ -31,8 +31,9 @@ case "$1 $2" in
     'shell pm')
         [[ $4 == xtr.keymapper ]] && printf 'package:/data/app/xt mapper/base.apk\r\n'
         ;;
-    'shell --')
-        printf '%s\n' "$5" >"$MOCK_LOG/remote-command"
+    'shell --uid=2000')
+        [[ $3 == --gid=3011 && $4 == -- && $5 == sh && $6 == -c ]] || exit 1
+        printf '%s\n' "$7" >"$MOCK_LOG/remote-command"
         cat >"$MOCK_LOG/remote-stdin"
         ;;
     *) exit 1 ;;
