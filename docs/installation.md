@@ -41,6 +41,10 @@ The bootstrap downloads the prebuilt helper and matching archive, verifies both 
 
 At present, the installer can install recognized missing shared-library packages through APT on Debian/Ubuntu. Other distributions receive explicit errors for missing libraries; package names are not guessed. Waydroid and the XtMapper Android APK remain prerequisites. System mutations require root, normally supplied by `sudo`. The bootstrap's default auto mode is the normal user-facing entry point; explicit operations are retained for diagnostics and maintenance.
 
+## Waydroid service identity
+
+The Android service process is launched through `waydroid shell --uid=2000`. UID 2000 is Android's dedicated Shell identity and is required by XtMapper's Binder handoff authentication. Waydroid's default LXC attach identity is root when no UID is selected, so that default must not be used for this launch. The override is intentionally limited to the remote `app_process` command; container management and diagnostic probes keep their existing execution context. XtMapper's Binder authentication checks must remain enabled.
+
 | Explicit Operation | Result |
 |---|---|
 | `status` | Report the active release and any recorded incomplete transaction without modifying state. |

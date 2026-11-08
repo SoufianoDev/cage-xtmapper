@@ -89,7 +89,11 @@ func waydroidTransport(cfg *Config) transport {
 			return runNonInteractive(append([]string{"shell", verb}, args...))
 		},
 		remoteShellCmd: func(cmd string) *exec.Cmd {
-			return runNonInteractive([]string{"shell", "--", "sh", "-c", cmd})
+			// XtMapper authenticates this Binder handoff against Android's Shell UID.
+			// Waydroid's normal LXC attach identity is root when no UID is selected.
+			// Scope the override to the service launch; probes and container lifecycle
+			// operations intentionally keep their existing execution context.
+			return runNonInteractive([]string{"shell", "--uid=2000", "--", "sh", "-c", cmd})
 		},
 	}
 }
