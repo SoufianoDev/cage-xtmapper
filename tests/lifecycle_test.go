@@ -214,8 +214,9 @@ case "$1 $2" in
         [ "$3" = sys.boot_completed ] && printf '1\n' || printf 'x86_64\n'
         ;;
     'shell pm') printf 'package:/data/app/xtmapper/base.apk\n' ;;
-    'shell --')
-        printf '%s\n' "$5" > "$MOCK_LOG/remote-command"
+    'shell --uid=2000')
+        [ "$3" = -- ] && [ "$4" = sh ] && [ "$5" = -c ] || exit 1
+        printf '%s\n' "$6" > "$MOCK_LOG/remote-command"
         printf '%s\n' "$$" > "$MOCK_LOG/remote.pid"
         if [ "$MOCK_PEER_MODE" = remote ]; then exit 7; fi
         exec sleep 600
@@ -272,8 +273,9 @@ case "$1 $2" in
         [ "$3" = sys.boot_completed ] && printf '1\n' || printf 'x86_64\n'
         ;;
     'shell pm') printf 'package:/data/app/xtmapper/base.apk\n' ;;
-    'shell --')
-        printf '%s\n' "$5" > "$MOCK_LOG/remote-command"
+    'shell --uid=2000')
+        [ "$3" = -- ] && [ "$4" = sh ] && [ "$5" = -c ] || exit 1
+        printf '%s\n' "$6" > "$MOCK_LOG/remote-command"
         printf '%s\n' "$$" > "$MOCK_LOG/remote.pid"
         trap '' TERM
         sleep 600 &
