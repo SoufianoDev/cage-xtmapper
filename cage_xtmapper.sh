@@ -120,7 +120,7 @@ else
     launch_ui() { cage_xtmapper -s -m last -- waydroid show-full-ui; }
     getprop() { sudo waydroid shell getprop "$1"; }
     package_path() { sudo waydroid shell pm path "$1" 2>/dev/null; }
-    remote_shell() { sudo waydroid shell -- sh -c "$1"; }
+    remote_shell() { sudo waydroid shell --uid=2000 --gid=3011 -- sh -c "$1"; }
 fi
 
 launch_ui | (
