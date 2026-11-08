@@ -43,7 +43,7 @@ At present, the installer can install recognized missing shared-library packages
 
 ## Waydroid service identity
 
-The Android service process is launched through `waydroid shell --uid=2000`. UID 2000 is Android's dedicated Shell identity and is required by XtMapper's Binder handoff authentication. Waydroid's default LXC attach identity is root when no UID is selected, so that default must not be used for this launch. The override is intentionally limited to the remote `app_process` command; container management and diagnostic probes keep their existing execution context. XtMapper's Binder authentication checks must remain enabled.
+The Android service process is launched through `waydroid shell --uid=2000 --gid=3011`. UID 2000 is Android's dedicated Shell identity and is required by XtMapper's Binder handoff authentication. GID 3011 is Android's `uhid` group, which owns `/dev/uinput` on standard Android 11–14 images; XtMapper's combined pointer mode opens that device directly. LXC drops supplementary groups for an attached command, so selecting the `uhid` GID explicitly preserves this device access without retaining Root UID or capabilities. The identity override is limited to the remote `app_process` launch; container management, diagnostic probes, and ADB transport remain unchanged. XtMapper's Binder authentication checks must remain enabled.
 
 | Explicit Operation | Result |
 |---|---|

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestWaydroidRemoteShellUsesAndroidShellUID(t *testing.T) {
+func TestWaydroidRemoteShellUsesAndroidShellAndUHIDIdentity(t *testing.T) {
 	const remoteCommand = "exec env BOOTCLASSPATH=$BOOTCLASSPATH '/system/bin/app_process' -Djava.library.path='/data/app/xt mapper/lib/x86_64' -Djava.class.path='/data/app/xt mapper/base.apk' / xtr.keymapper.server.RemoteServiceShell --wayland-client"
 
 	cfg := &Config{Tools: Tools{Sudo: "sudo", Waydroid: "waydroid"}}
@@ -16,6 +16,7 @@ func TestWaydroidRemoteShellUsesAndroidShellUID(t *testing.T) {
 		"waydroid",
 		"shell",
 		"--uid=2000",
+		"--gid=3011",
 		"--",
 		"sh",
 		"-c",

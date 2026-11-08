@@ -90,10 +90,10 @@ func waydroidTransport(cfg *Config) transport {
 		},
 		remoteShellCmd: func(cmd string) *exec.Cmd {
 			// XtMapper authenticates this Binder handoff against Android's Shell UID.
-			// Waydroid's normal LXC attach identity is root when no UID is selected.
-			// Scope the override to the service launch; probes and container lifecycle
-			// operations intentionally keep their existing execution context.
-			return runNonInteractive([]string{"shell", "--uid=2000", "--", "sh", "-c", cmd})
+			// LXC drops supplementary groups on attach; use the Android uhid primary
+			// GID so the Shell process can open /dev/uinput without retaining root caps.
+			// Keep this identity override scoped to the service launch.
+			return runNonInteractive([]string{"shell", "--uid=2000", "--gid=3011", "--", "sh", "-c", cmd})
 		},
 	}
 }

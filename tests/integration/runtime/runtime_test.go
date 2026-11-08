@@ -191,7 +191,7 @@ case "$1 ${2-}" in
         if [ "$3" = sys.boot_completed ]; then echo 1; else echo x86_64; fi ;;
     'shell pm') echo package:/data/app/xtmapper/base.apk ;;
     'shell --uid=2000')
-        [ "$3" = -- ] && [ "$4" = sh ] && [ "$5" = -c ] || exit 1
+        [ "$3" = --gid=3011 ] && [ "$4" = -- ] && [ "$5" = sh ] && [ "$6" = -c ] || exit 1
         cat > "$MOCK_ROOT/events" ;;
     *) exit 1 ;;
 esac
